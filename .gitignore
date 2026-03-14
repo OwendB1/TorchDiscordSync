@@ -1,0 +1,38 @@
+# Build artifacts
+bin/
+obj/
+build_archive/
+build_staging/
+*.zip
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Dependencies (KLJUČNO!)
+Dependencies/
+tmp/
+
+# Logs & Config
+doc\logs\
+doc\.inspect\
+logs\
+*.log
+config_sync.ini
+temp_msg.txt
+
+# Documentation (za javni master će skripta ovo maknuti)
+# doc/ 
+
+# Environment & Cache
+*.env
+*.local
+*.cache
+*.bak
+*.old
+*.orig
+*.tmp
+*.swp
+.DS_Store
+*.pyc

@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Project Properties -->
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>mamba.TDS</AssemblyName>
+    <RootNamespace>mamba.TDS</RootNamespace>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <!-- Ensures Discord.Net DLL files are copied to bin folder -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+
+    <!-- ── Assembly metadata (visible in DLL Properties → Details) ── -->
+    <!-- Version is injected by build.py via /p:Version= /p:FileVersion= -->
+    <Product>TorchDiscordSync</Product>
+    <AssemblyTitle>mamba.TorchDiscordSync</AssemblyTitle>
+    <Description>Space Engineers Discord synchronization plugin for Torch server</Description>
+    <Company>mamba</Company>
+    <Copyright>Copyright © mamba 2024-2026</Copyright>
+    <NeutralLanguage>en-US</NeutralLanguage>
+    <!-- GenerateAssemblyInfo=true lets SDK auto-create Properties\AssemblyInfo.g.cs -->
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <!-- NuGet Package References -->
+  <ItemGroup>
+    <PackageReference Include="Discord.Net" Version="3.11.0" />
+    <PackageReference Include="NLog" Version="4.7.15" />
+    <!-- Microsoft.Bcl.AsyncInterfaces is required for Discord.Net in .NET 4.8 -->
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="1.1.1" />
+    <!-- SQLite packages for primary database storage (XML is fallback).
+         IMPORTANT: Private=False means SQLite DLLs are NOT copied to the plugin output folder.
+         Torch's PluginManager would crash on mixed-mode SQLite.Core.dll otherwise.
+         To enable SQLite, manually place these DLLs in your Torch server ROOT directory:
+           - System.Data.SQLite.dll  (or System.Data.SQLite.Core.dll)
+           - x64\SQLite.Interop.dll
+         If DLLs are not present, the plugin automatically falls back to XML storage. -->
+    <!-- <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118"/> -->
+    <!-- <PackageReference Include="System.Data.SQLite" Version="1.0.118" /> -->
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118" />
+    <!-- <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118"> -->
+    <!-- <Private>False</Private> -->
+    <!-- <ExcludeAssets>runtime;native</ExcludeAssets> -->
+    <!-- </PackageReference> -->
+  </ItemGroup>
+
+  <!-- Torch and Space Engineers Assembly References -->
+  <ItemGroup>
+    <Reference Include="Torch">
+      <HintPath>Dependencies\Torch.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Torch.API">
+      <HintPath>Dependencies\Torch.API.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Sandbox.Game">
+      <HintPath>Dependencies\Sandbox.Game.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Sandbox.Common">
+      <HintPath>Dependencies\Sandbox.Common.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="VRage.Game">
+      <HintPath>Dependencies\VRage.Game.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="VRage.Library">
+      <HintPath>Dependencies\VRage.Library.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="VRage.Math">
+      <HintPath>Dependencies\VRage.Math.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="VRage">
+      <HintPath>Dependencies\VRage.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System.ComponentModel.Composition" />
+  </ItemGroup>
+
+</Project>
