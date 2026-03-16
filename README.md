@@ -132,14 +132,14 @@ Fully configurable templates in `DeathMessages.xml`. Four named placeholders are
 
 ```
 PvP:         "{killer} showed {victim} no mercy with {weapon}"
-Turret:      "{killer} used {weapon} to send {victim} to eternal hunting grounds"
+Turret:      "{victim} walked into {killer}'s {weapon}"
 Environment: "{victim} discovered that space has no oxygen"
 ```
 
 **An example of how the above template would look in the game:**
 ```
 PvP:         "orko showed mamba no mercy with Elite Automatic Rifle on the surface of Mars"
-Turret:      "The Factorum used Interior Turret to send mamba to eternal hunting grounds while walking on Moon"
+Turret:      "mamba walked into Space Pirates's Interior Turret at the edge of known space"
 Environment: "mamba discovered that space has no oxygen in the darkness"
 ```
 - the location (random location text) is added at the end of the message. The exact coordinate of the event is never shown.
@@ -147,8 +147,8 @@ Environment: "mamba discovered that space has no oxygen in the darkness"
 **The message on Discord has the same text as the in-game one with the emoticon prefix added:**
 ```
 PvP:         "🔥 orko showed mamba no mercy with Elite Automatic Rifle on the surface of Mars"
-Turret:      "💀 The Factorum used Interior Turret to send mamba to eternal hunting grounds while walking on Moon"
-Environment: "⚡ mamba discovered that space has no oxygen in the darkness"
+Turret:      "⚡ mamba walked into Space Pirates's Interior Turret at the edge of known space"
+Environment: "💀 mamba discovered that space has no oxygen in the darkness"
 ```
 
 ---
