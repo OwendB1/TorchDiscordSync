@@ -9,10 +9,10 @@ Unlike simple chat relays, **TorchDiscordSync** focuses on *deep game integratio
 | Property | Value |
 | :--- | :--- |
 | **C# / Runtime** | C# latest / .NET Framework 4.8 |
-| **Torch** | v2.4.39.328-master (2.4.37+) |
+| **Torch** | v2.4.46.328-master (2.4.37+) |
 | **Space Engineers** | 1.208.15+ |
 | **Author** | mamba |
-| **Version** | 2.4.39 |
+| **Version** | 2.4.46 |
 
 ---
 

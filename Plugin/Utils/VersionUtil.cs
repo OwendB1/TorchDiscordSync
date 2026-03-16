@@ -2,6 +2,7 @@
 using System;
 using System.IO;
 using System.Xml;
+using mamba.TorchDiscordSync.Plugin.Config;
 
 namespace mamba.TorchDiscordSync.Plugin.Utils
 {
@@ -47,7 +48,8 @@ namespace mamba.TorchDiscordSync.Plugin.Utils
                 LoggerUtil.LogError("[VersionUtil] Failed to load version from manifest: " + ex.Message);
             }
 
-            _cachedVersion = "2.0.0";
+            // _cachedVersion = "2.0.0";
+            _cachedVersion = MainConfig.Load().PluginVersion; // Fallback to version from config if manifest read fails
             return _cachedVersion;
         }
 
