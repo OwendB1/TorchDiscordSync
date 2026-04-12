@@ -46,6 +46,7 @@ namespace mamba.TorchDiscordSync
         private PlayerTrackingService       _playerTracking;
         private DamageTrackingService       _damageTracking;
         private MonitoringService           _monitoringService;
+        private TdsCommandService           _tdsCommandService;
 
         // ---- handlers ----
         private CommandProcessor            _commandProcessor;
@@ -59,6 +60,7 @@ namespace mamba.TorchDiscordSync
 
         /// <summary>Read-only access to the loaded plugin configuration.</summary>
         public MainConfig Config => _config;
+        public TdsCommandService CommandService => _tdsCommandService;
 
         // ---- state flags ----
         private Timer           _syncTimer;
@@ -237,23 +239,24 @@ namespace mamba.TorchDiscordSync
                     _verification, _eventLog, _config, _discordBot, _discordBotConfig);
                 LoggerUtil.LogInfo("[INIT] VerificationCommandHandler created and ready");
 
-                // ---- command processor (chat routing lives here) ----
-                // ChatSyncService and PlayerTrackingService are passed so that
-                // CommandProcessor.HandleChatMessage can forward messages correctly.
-                _commandProcessor = new CommandProcessor(
+                _tdsCommandService = new TdsCommandService(
+                    this,
                     _config,
-                    _discordWrapper,
                     _db,
                     _factionSync,
                     _eventLog,
                     _orchestrator,
-                    _verification,
-                    _verificationCommandHandler,
-                    _chatSync,       // passed for chat routing
-                    _playerTracking  // passed for system message handling
+                    _verificationCommandHandler);
+
+                // ---- command processor (chat routing + legacy /tds bridge) ----
+                _commandProcessor = new CommandProcessor(
+                    _config,
+                    _db,
+                    _chatSync,
+                    _playerTracking,
+                    _tdsCommandService
                 );
-                LoggerUtil.LogInfo(
-                    "[INIT] CommandProcessor created with VerificationCommandHandler");
+                LoggerUtil.LogInfo("[INIT] CommandProcessor created");
 
                 _eventManager = new EventManager(_config, _discordWrapper, _eventLog);
                 _chatModerator = new ChatModerator(_config, _discordWrapper, _db);
@@ -379,7 +382,7 @@ namespace mamba.TorchDiscordSync
         // ============================================================
         // PUBLIC COMMAND ENTRY POINT
         // (kept here so external callers have a stable API; delegates to
-        //  CommandProcessor.ProcessCommand internally)
+        //  the legacy /tds bridge for compatibility)
         // ============================================================
 
         /// <summary>
@@ -391,15 +394,48 @@ namespace mamba.TorchDiscordSync
         {
             if (_commandProcessor != null)
             {
-                LoggerUtil.LogDebug(
-                    "[COMMAND] Forwarding to CommandProcessor: " + command);
-                _commandProcessor.ProcessCommand(command, playerSteamID, playerName);
+                LoggerUtil.LogDebug("[COMMAND] Forwarding legacy chat command: " + command);
+                _commandProcessor.HandleLegacyChatCommand(command, playerSteamID, playerName);
             }
             else
             {
                 LoggerUtil.LogError(
                     "[COMMAND] CommandProcessor is null – cannot process command");
             }
+        }
+
+        public bool ReloadConfiguration()
+        {
+            var newConfig = MainConfig.Load();
+            if (newConfig == null)
+                return false;
+
+            _config.Enabled = newConfig.Enabled;
+            _config.Debug = newConfig.Debug;
+            _config.SyncIntervalSeconds = newConfig.SyncIntervalSeconds;
+            _config.AdminSteamIDs = newConfig.AdminSteamIDs;
+            _config.Discord = newConfig.Discord;
+            _config.Chat = newConfig.Chat;
+            _config.Death = newConfig.Death;
+            _config.Monitoring = newConfig.Monitoring;
+            _config.Faction = newConfig.Faction;
+            _config.VerificationCodeExpirationMinutes = newConfig.VerificationCodeExpirationMinutes;
+            _config.CleanupIntervalSeconds = newConfig.CleanupIntervalSeconds;
+            _config.DamageHistoryMaxSeconds = newConfig.DamageHistoryMaxSeconds;
+            _config.DataStorage = newConfig.DataStorage;
+            _config.PluginVersion = newConfig.PluginVersion;
+
+            if (_discordBotConfig != null && _config.Discord != null)
+            {
+                _discordBotConfig.BotToken = _config.Discord.BotToken;
+                _discordBotConfig.GuildID = _config.Discord.GuildID;
+                _discordBotConfig.BotPrefix = _config.Discord.BotPrefix;
+                _discordBotConfig.EnableDMNotifications = _config.Discord.EnableDMNotifications;
+                _discordBotConfig.VerificationCodeExpirationMinutes =
+                    _config.Discord.VerificationCodeExpirationMinutes;
+            }
+
+            return true;
         }
 
         // ============================================================
