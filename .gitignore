@@ -9,9 +9,11 @@ build_staging/
 .vs/
 *.user
 *.suo
+.idea/
 
 # Dependencies (KLJUČNO!)
-Dependencies/
+Dependencies/*
+Dependencies
 tmp/
 
 # Logs & Config
