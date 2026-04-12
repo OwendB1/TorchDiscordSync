@@ -87,7 +87,7 @@ Private, isolated communication channels between SE faction chat and Discord.
 
 Automatically mirrors Space Engineers factions into Discord.
 
-- Creates a Discord **role** and a set of **channels** (text + voice + optional forum) per faction.
+- Creates a Discord **role** and a set of **channels** (text + voice) per faction.
 - Assigns/removes roles from Discord members as players join or leave factions in-game.
 - **Duplicate prevention** — checks for existing roles/channels by name before creating to survive plugin restarts cleanly.
 - **Undo / rollback** — `admin:sync:undo <tag>` and `admin:sync:undo_all` remove all Discord artefacts created for a faction and revert the database record.

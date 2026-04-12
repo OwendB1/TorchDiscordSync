@@ -351,8 +351,6 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     existing.DiscordRoleName = faction.DiscordRoleName;
                     existing.DiscordChannelID = faction.DiscordChannelID;
                     existing.DiscordChannelName = faction.DiscordChannelName;
-                    existing.DiscordForumID = faction.DiscordForumID;
-                    existing.DiscordForumName = faction.DiscordForumName;
                     existing.DiscordVoiceChannelID = faction.DiscordVoiceChannelID;
                     existing.DiscordVoiceChannelName = faction.DiscordVoiceChannelName;
                     existing.GameFactionChatId = faction.GameFactionChatId;

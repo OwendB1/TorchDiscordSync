@@ -3,6 +3,8 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Discord;
+using Discord.Net.Providers.WS4Net;
+using Discord.Net.WebSockets;
 using Discord.Rest;
 using Discord.WebSocket;
 using mamba.TorchDiscordSync.Plugin.Config;
@@ -62,8 +64,8 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                         GatewayIntents.DirectMessages
                         | GatewayIntents.Guilds
                         | GatewayIntents.GuildMessages
-                        | GatewayIntents.MessageContent
                         | GatewayIntents.GuildMembers,
+                    WebSocketProvider = WS4NetProvider.Instance,
                 };
 
                 _client = new DiscordSocketClient(config);
@@ -174,7 +176,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     return false;
                 }
 
-                var dmChannel = await user.CreateDMChannelAsync();
+                var dmChannel = await user.GetOrCreateDMChannelAsync();
                 if (dmChannel == null)
                 {
                     LoggerUtil.LogWarning(
@@ -235,7 +237,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 if (user == null)
                     return false;
 
-                var dmChannel = await user.CreateDMChannelAsync();
+                var dmChannel = await user.GetOrCreateDMChannelAsync();
                 if (dmChannel == null)
                     return false;
 
@@ -299,7 +301,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 }
 
                 // Open DM channel with user
-                var dmChannel = await user.CreateDMChannelAsync();
+                var dmChannel = await user.GetOrCreateDMChannelAsync();
                 if (dmChannel == null)
                 {
                     LoggerUtil.LogWarning(
@@ -405,7 +407,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     return 0;
                 }
 
-                var role = await guild.CreateRoleAsync(roleName, color: color);
+                var role = await guild.CreateRoleAsync(roleName, color: color, isHoisted: false, isMentionable: false);
                 LoggerUtil.LogSuccess("[DISCORD_BOT] Created role: " + roleName);
                 return role.Id;
             }
@@ -662,89 +664,6 @@ namespace mamba.TorchDiscordSync.Plugin.Services
             catch (Exception ex)
             {
                 LoggerUtil.LogError("[DISCORD_BOT] Create voice channel error: " + ex.Message);
-                return 0;
-            }
-        }
-
-        /// <summary>
-        /// Create forum channel with same category and role permissions. Name = lowercase (same as faction).
-        /// </summary>
-        public async Task<ulong> CreateForumChannelAsync(
-            string channelName,
-            ulong? categoryID = null,
-            ulong? roleID = null
-        )
-        {
-            try
-            {
-                if (!_isReady)
-                {
-                    LoggerUtil.LogError("[DISCORD_BOT] Bot not ready");
-                    return 0;
-                }
-                var guild = _client.GetGuild(_config.GuildID);
-                if (guild == null)
-                {
-                    LoggerUtil.LogError("[DISCORD_BOT] Guild not found");
-                    return 0;
-                }
-
-                RestForumChannel channel = await guild.CreateForumChannelAsync(
-                    channelName,
-                    x =>
-                    {
-                        if (categoryID.HasValue && categoryID.Value > 0)
-                            x.CategoryId = categoryID.Value;
-                    }
-                );
-                if (channel == null)
-                    return 0;
-                if (roleID.HasValue && roleID.Value > 0)
-                {
-                    var role = guild.GetRole(roleID.Value);
-                    if (role != null)
-                    {
-                        try
-                        {
-                            await channel.AddPermissionOverwriteAsync(
-                                guild.EveryoneRole,
-                                new OverwritePermissions(viewChannel: PermValue.Deny)
-                            );
-                            await channel.AddPermissionOverwriteAsync(
-                                role,
-                                new OverwritePermissions(
-                                    viewChannel: PermValue.Allow,
-                                    sendMessages: PermValue.Allow
-                                )
-                            );
-                        }
-                        catch (Exception permEx)
-                        {
-                            // Permission overwrites can fail if role was deleted mid-flight.
-                            // Forum channel is still created; permissions can be set manually.
-                            LoggerUtil.LogWarning(
-                                $"[DISCORD_BOT] Forum created but permission overwrite failed " +
-                                $"(role may have been deleted): {permEx.Message}");
-                        }
-                    }
-                    else
-                    {
-                        LoggerUtil.LogDebug(
-                            $"[DISCORD_BOT] CreateForumChannelAsync: roleID {roleID.Value} not found on guild – skipping overwrite");
-                    }
-                }
-                LoggerUtil.LogSuccess(
-                    "[DISCORD_BOT] Created forum channel: "
-                        + channelName
-                        + " (ID: "
-                        + channel.Id
-                        + ")"
-                );
-                return channel.Id;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Create forum channel error: " + ex.Message);
                 return 0;
             }
         }
@@ -1551,7 +1470,9 @@ namespace mamba.TorchDiscordSync.Plugin.Services
 
                 var newRole = await guild.CreateRoleAsync(
                     "Verified",
-                    color: new Color(0, 176, 240)
+                    color: new Color(0, 176, 240),
+                    isHoisted: false,
+                    isMentionable: false
                 );
                 LoggerUtil.LogSuccess($"[DISCORD_BOT] Created Verified role");
                 return newRole.Id;

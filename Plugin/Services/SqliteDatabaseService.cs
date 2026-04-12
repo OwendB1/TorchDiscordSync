@@ -114,8 +114,6 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     discord_channel_id      INTEGER DEFAULT 0,
                     discord_role_name       TEXT,
                     discord_channel_name    TEXT,
-                    discord_forum_id        INTEGER DEFAULT 0,
-                    discord_forum_name      TEXT,
                     discord_voice_id        INTEGER DEFAULT 0,
                     discord_voice_name      TEXT,
                     game_faction_chat_id    INTEGER DEFAULT 0,
@@ -273,14 +271,12 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                             INSERT INTO factions
                                 (faction_id, tag, name, discord_role_id, discord_channel_id,
                                  discord_role_name, discord_channel_name,
-                                 discord_forum_id, discord_forum_name,
                                  discord_voice_id, discord_voice_name,
                                  game_faction_chat_id, sync_status, synced_at, synced_by,
                                  error_message, created_at, updated_at)
                             VALUES
                                 (@id, @tag, @name, @roleId, @channelId,
                                  @roleName, @channelName,
-                                 @forumId, @forumName,
                                  @voiceId, @voiceName,
                                  @gameChatId, @syncStatus, @syncedAt, @syncedBy,
                                  @error, @now, @now)
@@ -290,8 +286,6 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                                 discord_channel_id=excluded.discord_channel_id,
                                 discord_role_name=excluded.discord_role_name,
                                 discord_channel_name=excluded.discord_channel_name,
-                                discord_forum_id=excluded.discord_forum_id,
-                                discord_forum_name=excluded.discord_forum_name,
                                 discord_voice_id=excluded.discord_voice_id,
                                 discord_voice_name=excluded.discord_voice_name,
                                 game_faction_chat_id=excluded.game_faction_chat_id,
@@ -308,8 +302,6 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                             cmd.Parameters.AddWithValue("@channelId", (long)faction.DiscordChannelID);
                             cmd.Parameters.AddWithValue("@roleName", faction.DiscordRoleName ?? "");
                             cmd.Parameters.AddWithValue("@channelName", faction.DiscordChannelName ?? "");
-                            cmd.Parameters.AddWithValue("@forumId", (long)faction.DiscordForumID);
-                            cmd.Parameters.AddWithValue("@forumName", faction.DiscordForumName ?? "");
                             cmd.Parameters.AddWithValue("@voiceId", (long)faction.DiscordVoiceChannelID);
                             cmd.Parameters.AddWithValue("@voiceName", faction.DiscordVoiceChannelName ?? "");
                             cmd.Parameters.AddWithValue("@gameChatId", faction.GameFactionChatId);
@@ -502,8 +494,6 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 DiscordChannelID = ToUlong(r["discord_channel_id"]),
                 DiscordRoleName = ToStr(r["discord_role_name"]),
                 DiscordChannelName = ToStr(r["discord_channel_name"]),
-                DiscordForumID = ToUlong(r["discord_forum_id"]),
-                DiscordForumName = ToStr(r["discord_forum_name"]),
                 DiscordVoiceChannelID = ToUlong(r["discord_voice_id"]),
                 DiscordVoiceChannelName = ToStr(r["discord_voice_name"]),
                 GameFactionChatId = ToLong(r["game_faction_chat_id"]),

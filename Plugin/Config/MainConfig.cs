@@ -636,9 +636,6 @@ namespace mamba.TorchDiscordSync.Plugin.Config
         public bool AutoCreateChannels { get; set; }
 
         [XmlElement]
-        public bool AutoCreateForum { get; set; }
-
-        [XmlElement]
         public bool AutoCreateVoice { get; set; }
 
         /// <summary>
@@ -653,7 +650,6 @@ namespace mamba.TorchDiscordSync.Plugin.Config
         {
             Enabled = false;
             AutoCreateChannels = false;
-            AutoCreateForum = false;
             AutoCreateVoice = false;
             FactionDiscordToGlobalFallback = true;
         }

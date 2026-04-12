@@ -54,6 +54,59 @@ namespace mamba.TorchDiscordSync.Plugin.Services
             LoggerUtil.LogDebug("[FACTION_SYNC] FactionSyncService initialized");
         }
 
+        private async Task DeleteTrackedExtraChannelsAsync(
+            FactionModel faction,
+            string context,
+            System.Text.StringBuilder result = null
+        )
+        {
+            if (faction?.ChannelsCreated == null || faction.ChannelsCreated.Count == 0)
+                return;
+
+            var protectedIds = new HashSet<ulong>();
+            if (faction.DiscordChannelID > 0)
+                protectedIds.Add(faction.DiscordChannelID);
+            if (faction.DiscordVoiceChannelID > 0)
+                protectedIds.Add(faction.DiscordVoiceChannelID);
+
+            foreach (var trackedChannel in faction.ChannelsCreated)
+            {
+                if (trackedChannel == null || trackedChannel.ChannelID == 0 || trackedChannel.DeletedOnUndo)
+                    continue;
+
+                if (protectedIds.Contains(trackedChannel.ChannelID))
+                    continue;
+
+                try
+                {
+                    bool deleted = await _discord.DeleteChannelAsync(trackedChannel.ChannelID);
+                    trackedChannel.DeletedOnUndo = true;
+
+                    if (deleted)
+                    {
+                        result?.AppendLine(
+                            $"✓ Deleted tracked channel: {trackedChannel.ChannelName} (ID: {trackedChannel.ChannelID})"
+                        );
+                        LoggerUtil.LogInfo(
+                            $"[{context}] Deleted tracked channel {trackedChannel.ChannelName} (ID: {trackedChannel.ChannelID})"
+                        );
+                    }
+                    else
+                    {
+                        LoggerUtil.LogDebug(
+                            $"[{context}] Tracked channel already missing: {trackedChannel.ChannelName} (ID: {trackedChannel.ChannelID})"
+                        );
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LoggerUtil.LogWarning(
+                        $"[{context}] Tracked channel delete failed for {trackedChannel.ChannelID}: {ex.Message}"
+                    );
+                }
+            }
+        }
+
         /// <summary>
         /// Loads all player-created factions from the current game session.
         /// Filters out NPC factions and factions with non-standard tags.
@@ -401,93 +454,11 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     }
 
                     // ============================================================
-                    // Create forum and voice channels if enabled (same name lowcase, same role)
+                    // Create voice channels if enabled (same name lowcase, same role)
                     // ============================================================
                     string lowcaseName = (gameFaction.Name != null ? gameFaction.Name : dbFaction.Tag).ToLower();
                     ulong? catId = _config.Discord.FactionCategoryId;
                     ulong? roleId = dbFaction.DiscordRoleID > 0 ? (ulong?)dbFaction.DiscordRoleID : null;
-
-                    // ============================================================
-                    // Check if forum already exists on Discord (same pattern as role/channel)
-                    // ============================================================
-                    if (dbFaction.DiscordForumID > 0)
-                    {
-                        // Use type-specific check to avoid text-channel IDs passing as forums
-                        var existingForum = _discord.GetExistingForumChannel(dbFaction.DiscordForumID);
-                        if (existingForum != null)
-                        {
-                            LoggerUtil.LogDebug(
-                                "[FACTION_SYNC] Existing Discord forum confirmed for "
-                                    + dbFaction.Tag + " (ForumID: " + dbFaction.DiscordForumID + ")"
-                            );
-                        }
-                        else
-                        {
-                            LoggerUtil.LogInfo(
-                                "[FACTION_SYNC] Stored ForumID " + dbFaction.DiscordForumID +
-                                " not found (or wrong type) on Discord for " + dbFaction.Tag +
-                                " – will search by name or recreate"
-                            );
-                            dbFaction.DiscordForumID = 0;
-                            dbFaction.DiscordForumName = null;
-                        }
-                    }
-
-                    if (_config.Faction.AutoCreateForum && dbFaction.DiscordForumID == 0)
-                    {
-                        try
-                        {
-                            // Fallback 1: check ChannelsCreated list (persists across restarts even
-                            // if ForumID wasn't in the DB root fields due to schema mismatch)
-                            ulong existingForumId = 0;
-                            if (dbFaction.ChannelsCreated != null)
-                            {
-                                var createdForum = dbFaction.ChannelsCreated
-                                    .FirstOrDefault(c => c.ChannelType == "Forum" && !c.DeletedOnUndo);
-                                if (createdForum != null && createdForum.ChannelID > 0)
-                                {
-                                    // Verify it still exists on Discord as a forum type
-                                    var ch = _discord.GetExistingForumChannel(createdForum.ChannelID);
-                                    if (ch != null)
-                                    {
-                                        existingForumId = createdForum.ChannelID;
-                                        LoggerUtil.LogInfo(
-                                            "[FACTION_SYNC] Found forum from ChannelsCreated: " + createdForum.ChannelName +
-                                            " (ID: " + existingForumId + ") – reusing");
-                                    }
-                                }
-                            }
-
-                            // Fallback 2: search Discord by channel name
-                            if (existingForumId == 0)
-                                existingForumId = _discord.FindForumChannelByName(lowcaseName);
-
-                            if (existingForumId > 0)
-                            {
-                                LoggerUtil.LogInfo(
-                                    "[FACTION_SYNC] Found existing forum channel '" + lowcaseName +
-                                    "' (ID: " + existingForumId + ") – reusing, skipping create.");
-                                dbFaction.DiscordForumID = existingForumId;
-                                dbFaction.DiscordForumName = lowcaseName;
-                            }
-                            else
-                            {
-                                var forumId = await _discord.CreateForumChannelAsync(lowcaseName, catId, roleId);
-                                if (forumId > 0)
-                                {
-                                    dbFaction.DiscordForumID = forumId;
-                                    dbFaction.DiscordForumName = lowcaseName;
-                                    if (dbFaction.ChannelsCreated == null) dbFaction.ChannelsCreated = new List<DiscordChannelCreated>();
-                                    dbFaction.ChannelsCreated.Add(new DiscordChannelCreated { ChannelID = forumId, ChannelName = lowcaseName, ChannelType = "Forum", CreatedAt = DateTime.UtcNow });
-                                    LoggerUtil.LogSuccess("[FACTION_SYNC] Created forum: " + lowcaseName + " (ID: " + forumId + ")");
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            LoggerUtil.LogError("[FACTION_SYNC] Forum channel creation failed: " + ex.Message);
-                        }
-                    }
 
                     if (_config.Faction.AutoCreateVoice)
                     {
@@ -686,16 +657,13 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                             await _discord.DeleteChannelAsync(faction.DiscordChannelID);
                             LoggerUtil.LogInfo($"[FACTION_SYNC] Deleted Discord channel for: {faction.Name}");
                         }
-                        if (faction.DiscordForumID != 0)
-                        {
-                            await _discord.DeleteChannelAsync(faction.DiscordForumID);
-                            LoggerUtil.LogInfo($"[FACTION_SYNC] Deleted forum for: {faction.Name}");
-                        }
                         if (faction.DiscordVoiceChannelID != 0)
                         {
                             await _discord.DeleteChannelAsync(faction.DiscordVoiceChannelID);
                             LoggerUtil.LogInfo($"[FACTION_SYNC] Deleted voice for: {faction.Name}");
                         }
+
+                        await DeleteTrackedExtraChannelsAsync(faction, "FACTION_SYNC");
                     }
                 }
 
@@ -913,6 +881,8 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 var result = new System.Text.StringBuilder();
                 result.AppendLine($"[UNDO] {factionTag}");
 
+                await DeleteTrackedExtraChannelsAsync(faction, "ADMIN:SYNC:UNDO", result);
+
                 // Delete Discord role
                 if (faction.DiscordRoleID > 0)
                 {
@@ -940,7 +910,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     }
                 }
 
-                // Delete Discord channels (text, forum, voice)
+                // Delete Discord channels (text and voice)
                 if (faction.DiscordChannelID > 0)
                 {
                     try
@@ -965,18 +935,6 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                         LoggerUtil.LogError($"[ADMIN:SYNC:UNDO] Failed to delete channel: {ex.Message}");
                         return $"Failed to delete channel: {ex.Message}";
                     }
-                }
-
-                if (faction.DiscordForumID > 0)
-                {
-                    try
-                    {
-                        await _discord.DeleteChannelAsync(faction.DiscordForumID);
-                        result.AppendLine($"✓ Deleted forum: {faction.DiscordForumName}");
-                        faction.DiscordForumID = 0;
-                        faction.DiscordForumName = "";
-                    }
-                    catch (Exception ex) { LoggerUtil.LogWarning($"[ADMIN:SYNC:UNDO] Forum delete: {ex.Message}"); faction.DiscordForumID = 0; }
                 }
                 if (faction.DiscordVoiceChannelID > 0)
                 {
@@ -1062,12 +1020,26 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                             }
                         }
 
+                        if (faction.DiscordVoiceChannelID > 0)
+                        {
+                            bool deleted = await _discord.DeleteChannelAsync(faction.DiscordVoiceChannelID);
+                            if (deleted)
+                            {
+                                result.AppendLine($"✓ Deleted orphaned voice channel: {faction.DiscordVoiceChannelName}");
+                                LoggerUtil.LogSuccess($"[ADMIN:SYNC:CLEANUP] Deleted voice: {faction.DiscordVoiceChannelName}");
+                            }
+                        }
+
+                        await DeleteTrackedExtraChannelsAsync(faction, "ADMIN:SYNC:CLEANUP", result);
+
                         // Reset faction status
                         faction.SyncStatus = "Pending";
                         faction.DiscordRoleID = 0;
                         faction.DiscordChannelID = 0;
+                        faction.DiscordVoiceChannelID = 0;
                         faction.DiscordRoleName = "";
                         faction.DiscordChannelName = "";
+                        faction.DiscordVoiceChannelName = "";
                         faction.SyncedAt = null;
                         faction.ErrorMessage = "";
                         _db.SaveFaction(faction);
@@ -1214,6 +1186,57 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     {
                         result.AppendLine("  ℹ No Discord channel stored for this faction.");
                     }
+
+                    if (faction.DiscordVoiceChannelID > 0)
+                    {
+                        try
+                        {
+                            bool deletedVoice = await _discord.DeleteChannelAsync(
+                                faction.DiscordVoiceChannelID
+                            );
+                            if (deletedVoice)
+                            {
+                                result.AppendLine(
+                                    "  ✓ Deleted voice channel ID: " + faction.DiscordVoiceChannelID
+                                );
+                                LoggerUtil.LogSuccess(
+                                    "[ADMIN:SYNC:UNDO_ALL] Deleted voice channel for faction " + faction.Tag
+                                );
+                            }
+                            else
+                            {
+                                result.AppendLine(
+                                    "  ⚠ Voice channel not found or already deleted (ID: "
+                                        + faction.DiscordVoiceChannelID
+                                        + ")"
+                                );
+                                LoggerUtil.LogWarning(
+                                    "[ADMIN:SYNC:UNDO_ALL] Voice channel not found for faction " + faction.Tag
+                                );
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            result.AppendLine(
+                                "  ❌ Failed to delete voice channel (ID: "
+                                    + faction.DiscordVoiceChannelID
+                                    + "): "
+                                    + ex.Message
+                            );
+                            LoggerUtil.LogError(
+                                "[ADMIN:SYNC:UNDO_ALL] Failed to delete voice channel for "
+                                    + faction.Tag
+                                    + ": "
+                                    + ex.Message
+                            );
+                        }
+                    }
+                    else
+                    {
+                        result.AppendLine("  ℹ No Discord voice channel stored for this faction.");
+                    }
+
+                    await DeleteTrackedExtraChannelsAsync(faction, "ADMIN:SYNC:UNDO_ALL", result);
 
                     // Finally, remove faction record from XML
                     _db.DeleteFaction(faction.FactionID);

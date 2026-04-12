@@ -712,8 +712,7 @@ namespace mamba.TorchDiscordSync
                                 var discordClient = _discordBot.GetClient();
                                 if (discordClient != null)
                                 {
-                                    var discordUser =
-                                        await discordClient.GetUserAsync(discordID);
+                                    var discordUser = discordClient.GetUser(discordID);
                                     if (discordUser != null)
                                     {
                                         bool roleAssigned =
@@ -739,8 +738,7 @@ namespace mamba.TorchDiscordSync
                                     var discordClient = _discordBot.GetClient();
                                     if (discordClient != null)
                                     {
-                                        var discordUser =
-                                            await discordClient.GetUserAsync(discordID);
+                                        var discordUser = discordClient.GetUser(discordID);
                                         if (discordUser != null)
                                         {
                                             bool factionRoleAssigned =

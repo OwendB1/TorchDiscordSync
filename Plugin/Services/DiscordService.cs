@@ -124,30 +124,6 @@ namespace mamba.TorchDiscordSync.Plugin.Services
             }
         }
 
-        /// <summary>Create forum channel in faction category with same role permissions. Name = lowercase.</summary>
-        public async Task<ulong> CreateForumChannelAsync(
-            string channelName,
-            ulong? categoryID = null,
-            ulong? roleID = null
-        )
-        {
-            try
-            {
-                if (_botService != null)
-                    return await _botService.CreateForumChannelAsync(
-                        channelName,
-                        categoryID,
-                        roleID
-                    );
-                return 0;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD] Create forum channel error: " + ex.Message);
-                return 0;
-            }
-        }
-
         /// <summary>
         /// Delete Discord role
         /// </summary>
@@ -254,7 +230,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 }
 
                 // FIXED: Use GetChannelAsync method from Discord client
-                var channel = await client.GetChannelAsync(channelId);
+                var channel = client.GetChannel(channelId) as SocketTextChannel;
                 if (channel != null)
                 {
                     LoggerUtil.LogDebug(
@@ -300,7 +276,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
         }
 
         /// <summary>
-        /// Returns the channel only if it is actually a voice channel (not text, forum, stage).
+        /// Returns the channel only if it is actually a voice channel.
         /// Prevents stale text-channel IDs stored as DiscordVoiceChannelID from passing validation.
         /// </summary>
         public IChannel GetExistingVoiceChannel(ulong channelId)
@@ -315,8 +291,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
 
                 string typeName = ch.GetType().Name;
                 bool isVoice = typeName.IndexOf("Voice", StringComparison.OrdinalIgnoreCase) >= 0
-                            && typeName.IndexOf("Text", StringComparison.OrdinalIgnoreCase) < 0
-                            && typeName.IndexOf("Forum", StringComparison.OrdinalIgnoreCase) < 0;
+                            && typeName.IndexOf("Text", StringComparison.OrdinalIgnoreCase) < 0;
 
                 if (!isVoice)
                 {
@@ -331,40 +306,6 @@ namespace mamba.TorchDiscordSync.Plugin.Services
             catch (Exception ex)
             {
                 LoggerUtil.LogDebug("[DISCORD] GetExistingVoiceChannel error: " + ex.Message);
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Returns the channel only if it is actually a forum channel.
-        /// Prevents stale IDs of wrong type from passing validation.
-        /// </summary>
-        public IChannel GetExistingForumChannel(ulong channelId)
-        {
-            try
-            {
-                var socketGuild = _botService?.GetClient()?.GetGuild(_botService.GetGuildId());
-                if (socketGuild == null) return null;
-
-                var ch = socketGuild.GetChannel(channelId);
-                if (ch == null) return null;
-
-                string typeName = ch.GetType().Name;
-                bool isForum = typeName.IndexOf("Forum", StringComparison.OrdinalIgnoreCase) >= 0;
-
-                if (!isForum)
-                {
-                    LoggerUtil.LogDebug(
-                        $"[DISCORD] GetExistingForumChannel: ID {channelId} is '{typeName}', not a forum channel – ignoring");
-                    return null;
-                }
-
-                LoggerUtil.LogDebug($"[DISCORD] GetExistingForumChannel: confirmed forum channel {ch.Name} (ID: {channelId})");
-                return ch;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogDebug("[DISCORD] GetExistingForumChannel error: " + ex.Message);
                 return null;
             }
         }
@@ -532,7 +473,6 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     string typeName = c.GetType().Name;
                     bool isActualText = typeName.IndexOf("Text", StringComparison.OrdinalIgnoreCase) >= 0
                                     && typeName.IndexOf("Voice", StringComparison.OrdinalIgnoreCase) < 0
-                                    && typeName.IndexOf("Forum", StringComparison.OrdinalIgnoreCase) < 0
                                     && typeName.IndexOf("Stage", StringComparison.OrdinalIgnoreCase) < 0;
 
                     if (!isActualText)
@@ -556,85 +496,6 @@ namespace mamba.TorchDiscordSync.Plugin.Services
         }
 
         /// <summary>
-        /// Finds a Discord forum channel by exact name (case-insensitive).
-        /// Returns the channel ID if found, 0 otherwise.
-        /// Uses multiple lookup strategies for Discord.Net 3.x compatibility.
-        /// </summary>
-        public ulong FindForumChannelByName(string name)
-        {
-            try
-            {
-                var socketGuild =
-                    _botService != null
-                        ? _botService.GetClient()?.GetGuild(_botService.GetGuildId())
-                        : null;
-                if (socketGuild == null)
-                    return 0;
-
-                // Discord converts spaces → hyphens in forum channel names.
-                // Match against both variants.
-                string nameHyphen = name.Replace(' ', '-');
-
-                // Strategy 1: ForumChannels property (Discord.Net 3.x dedicated collection)
-                try
-                {
-                    var forumChannels = socketGuild.ForumChannels;
-                    if (forumChannels != null)
-                    {
-                        foreach (var fc in forumChannels)
-                        {
-                            if (string.Equals(fc.Name, name,        StringComparison.OrdinalIgnoreCase) ||
-                                string.Equals(fc.Name, nameHyphen,  StringComparison.OrdinalIgnoreCase))
-                            {
-                                LoggerUtil.LogInfo(
-                                    "[DISCORD] Found existing forum channel (ForumChannels): "
-                                        + fc.Name + " (ID: " + fc.Id + ")");
-                                return fc.Id;
-                            }
-                        }
-                        LoggerUtil.LogDebug(
-                            "[DISCORD] ForumChannels scanned (" + forumChannels.Count +
-                            " entries), '" + name + "' / '" + nameHyphen + "' not found.");
-                    }
-                }
-                catch (Exception ex1)
-                {
-                    LoggerUtil.LogDebug("[DISCORD] ForumChannels strategy failed: " + ex1.Message);
-                }
-
-                // Strategy 2: Iterate all Channels, match by type name string
-                try
-                {
-                    foreach (var ch in socketGuild.Channels)
-                    {
-                        string typeName = ch.GetType().Name;
-                        if (typeName.IndexOf("Forum", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                            (string.Equals(ch.Name, name,       StringComparison.OrdinalIgnoreCase) ||
-                             string.Equals(ch.Name, nameHyphen, StringComparison.OrdinalIgnoreCase)))
-                        {
-                            LoggerUtil.LogInfo(
-                                "[DISCORD] Found existing forum channel (type scan): "
-                                    + ch.Name + " (ID: " + ch.Id + ", type: " + typeName + ")");
-                            return ch.Id;
-                        }
-                    }
-                }
-                catch (Exception ex2)
-                {
-                    LoggerUtil.LogDebug("[DISCORD] Channel type-scan strategy failed: " + ex2.Message);
-                }
-
-                LoggerUtil.LogDebug("[DISCORD] FindForumChannelByName: '" + name + "' / '" + nameHyphen + "' not found on Discord.");
-                return 0;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogDebug("[DISCORD] FindForumChannelByName error: " + ex.Message);
-                return 0;
-            }
-        }
-
-        /// <summary>
         /// Finds a Discord voice channel by exact name (case-insensitive).
         /// Returns the channel ID if found, 0 otherwise.
         /// </summary>
@@ -649,7 +510,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 if (socketGuild == null)
                     return 0;
 
-                // Use VoiceChannels collection (excludes text/forum channels)
+                // Use VoiceChannels collection and still validate the runtime type.
                 var channel = socketGuild.VoiceChannels.FirstOrDefault(c =>
                     string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase)
                 );
@@ -660,8 +521,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     // not a text channel that leaked into the collection (seen in some Discord.Net versions)
                     string typeName = channel.GetType().Name;
                     bool isActuallyVoice = typeName.IndexOf("Voice", StringComparison.OrdinalIgnoreCase) >= 0
-                                       && typeName.IndexOf("Text", StringComparison.OrdinalIgnoreCase) < 0
-                                       && typeName.IndexOf("Forum", StringComparison.OrdinalIgnoreCase) < 0;
+                                       && typeName.IndexOf("Text", StringComparison.OrdinalIgnoreCase) < 0;
 
                     if (!isActuallyVoice)
                     {

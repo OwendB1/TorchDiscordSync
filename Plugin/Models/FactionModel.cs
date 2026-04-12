@@ -52,20 +52,6 @@ namespace mamba.TorchDiscordSync.Plugin.Models
         [XmlArrayItem("Player")]
         public List<FactionPlayerModel> Players { get; set; } = new List<FactionPlayerModel>();
 
-        // ========== FACTION CHAT CHANNELS (NEW) ==========
-        /// <summary>
-        /// Discord forum channel ID for faction
-        /// Used for organized discussions
-        /// </summary>
-        [XmlElement]
-        public ulong DiscordForumID { get; set; }
-
-        /// <summary>
-        /// Discord forum channel name (same as faction name lowercase)
-        /// </summary>
-        [XmlElement]
-        public string DiscordForumName { get; set; }
-
         /// <summary>
         /// Discord voice channel ID for faction
         /// Used for voice communications
@@ -116,7 +102,7 @@ namespace mamba.TorchDiscordSync.Plugin.Models
         public string ChannelName { get; set; }
 
         /// <summary>
-        /// Channel type: "Text", "Forum", or "Voice"
+        /// Channel type: "Text" or "Voice"
         /// </summary>
         [XmlElement]
         public string ChannelType { get; set; }
