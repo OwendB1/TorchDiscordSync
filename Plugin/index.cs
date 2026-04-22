@@ -706,7 +706,9 @@ namespace mamba.TorchDiscordSync
             return _discordBot.ConnectAsync().ContinueWith(t =>
             {
                 if (t.Result)
-                    LoggerUtil.LogSuccess("Discord Bot connected and ready");
+                    LoggerUtil.LogInfo(
+                        "Discord Bot login/start completed; waiting for Ready event"
+                    );
             });
         }
 

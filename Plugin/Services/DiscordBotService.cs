@@ -57,6 +57,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     return true;
 
                 LoggerUtil.LogInfo("[DISCORD_BOT] Initializing Discord bot...");
+                const GatewayIntents messageContentIntent = (GatewayIntents)32768;
 
                 var config = new DiscordSocketConfig
                 {
@@ -64,13 +65,17 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                         GatewayIntents.DirectMessages
                         | GatewayIntents.Guilds
                         | GatewayIntents.GuildMessages
-                        | GatewayIntents.GuildMembers,
+                        | GatewayIntents.GuildMembers
+                        // Discord.Net 2.4.0 predates the named MessageContent flag.
+                        | messageContentIntent
+                        |GatewayIntents.GuildPresences,
                     WebSocketProvider = WS4NetProvider.Instance,
                 };
 
                 _client = new DiscordSocketClient(config);
 
                 // Hook events
+                _client.Log += OnClientLog;
                 _client.Ready += OnBotReady;
                 _client.Disconnected += OnBotDisconnected;
                 _client.MessageReceived += OnMessageReceived;
@@ -80,7 +85,9 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 await _client.StartAsync();
 
                 _isConnected = true;
-                LoggerUtil.LogSuccess("[DISCORD_BOT] Bot connection established");
+                LoggerUtil.LogInfo(
+                    "[DISCORD_BOT] Login succeeded and gateway start requested; waiting for Ready event"
+                );
 
                 return true;
             }
@@ -101,6 +108,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 if (_client != null)
                 {
                     // Unhook events to prevent memory leaks
+                    _client.Log -= OnClientLog;
                     _client.Ready -= OnBotReady;
                     _client.Disconnected -= OnBotDisconnected;
                     _client.MessageReceived -= OnMessageReceived;
@@ -789,10 +797,34 @@ namespace mamba.TorchDiscordSync.Plugin.Services
         // PRIVATE EVENT HANDLERS
         // ============================================================
 
-        private Task OnBotReady()
+        private async Task OnBotReady()
         {
+            _isConnected = true;
             _isReady = true;
             LoggerUtil.LogSuccess("[DISCORD_BOT] Bot is ready and listening!");
+
+            try
+            {
+                if (_client != null)
+                    await _client.SetStatusAsync(UserStatus.Online);
+
+                if (_client != null)
+                    await _client.SetGameAsync(
+                    _config.BotPrefix + "tds help",
+                    null,
+                    ActivityType.Listening
+                );
+
+                LoggerUtil.LogInfo(
+                    "[DISCORD_BOT] Presence set to online and listening for commands"
+                );
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogWarning(
+                    "[DISCORD_BOT] Failed to set presence: " + ex.Message
+                );
+            }
 
             // NEW: Pre-load guild users so username/ID lookups work immediately
             try
@@ -818,13 +850,12 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     "[DISCORD_BOT] Failed to download guild users on Ready: " + ex.Message
                 );
             }
-
-            return Task.CompletedTask;
         }
 
         /// Handle disconnection and attempt reconnection
         private async Task OnBotDisconnected(Exception ex)
         {
+            _isConnected = false;
             _isReady = false;
             string exMsg = ex?.Message ?? "Unknown error";
             LoggerUtil.LogWarning("[DISCORD_BOT] Bot disconnected: " + exMsg);
@@ -842,10 +873,13 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     );
                     await Task.Delay(delayMs);
 
-                    if (_client != null && !_isConnected)
+                    if (_client != null && _client.ConnectionState != ConnectionState.Connected)
                     {
                         await _client.StartAsync();
-                        LoggerUtil.LogSuccess("[DISCORD_BOT] Reconnection successful!");
+                        _isConnected = true;
+                        LoggerUtil.LogSuccess(
+                            "[DISCORD_BOT] Reconnection start requested; waiting for Ready event"
+                        );
                         return;
                     }
                 }
@@ -914,6 +948,14 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     return; // Don't forward DM to chat sync
                 }
 
+                if (string.IsNullOrWhiteSpace(message.Content))
+                {
+                    LoggerUtil.LogWarning(
+                        "[DISCORD_BOT] Received a guild message with no content. Enable the Message Content intent for this bot in the Discord developer portal if prefix commands should work in guild channels."
+                    );
+                    return;
+                }
+
                 // If not DM, forward to chat sync (guild messages)
                 if (OnMessageReceivedEvent != null)
                 {
@@ -946,6 +988,32 @@ namespace mamba.TorchDiscordSync.Plugin.Services
             {
                 LoggerUtil.LogError("[DISCORD_BOT] Message handler error: " + ex.Message);
             }
+        }
+
+        private Task OnClientLog(LogMessage message)
+        {
+            string text = "[DISCORD_BOT] [" + message.Severity + "] " + message.Message;
+            if (message.Exception != null)
+                text += " | " + message.Exception.Message;
+
+            switch (message.Severity)
+            {
+                case LogSeverity.Critical:
+                case LogSeverity.Error:
+                    LoggerUtil.LogError(text);
+                    break;
+                case LogSeverity.Warning:
+                    LoggerUtil.LogWarning(text);
+                    break;
+                case LogSeverity.Info:
+                    LoggerUtil.LogInfo(text);
+                    break;
+                default:
+                    LoggerUtil.LogDebug(text);
+                    break;
+            }
+
+            return Task.CompletedTask;
         }
 
         private async Task HandleVerifyCommand(SocketMessage message, string[] args)

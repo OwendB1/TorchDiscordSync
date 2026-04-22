@@ -91,17 +91,29 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 string subRaw = content.Length > 4
                     ? content.Substring(4).Trim()
                     : "";
+                string normalizedSubRaw = NormalizeDiscordAdminCommand(subRaw);
 
                 // ── Acknowledge immediately ──────────────────────────────
-                await ReplyAckAsync(msg, subRaw);
+                await ReplyAckAsync(msg, normalizedSubRaw);
 
                 // ── Parse and execute ─────────────────────────────────────
-                await ExecuteAsync(msg, subRaw, authorTag);
+                await ExecuteAsync(msg, normalizedSubRaw, authorTag);
             }
             catch (Exception ex)
             {
                 LoggerUtil.LogError($"[ADMIN_BOT] HandleMessageAsync error: {ex.Message}");
             }
+        }
+
+        private static string NormalizeDiscordAdminCommand(string subRaw)
+        {
+            if (string.IsNullOrWhiteSpace(subRaw))
+                return "";
+
+            if (subRaw.StartsWith("admin:", StringComparison.OrdinalIgnoreCase))
+                return subRaw.Substring("admin:".Length);
+
+            return subRaw;
         }
 
         // ================================================================
