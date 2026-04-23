@@ -1,8 +1,8 @@
 // Plugin/Utils/VersionUtil.cs
 using System;
 using System.IO;
+using System.Reflection;
 using System.Xml;
-using TorchDiscordSync.Plugin.Config;
 
 namespace TorchDiscordSync.Plugin.Utils
 {
@@ -28,6 +28,46 @@ namespace TorchDiscordSync.Plugin.Utils
             }
 
             return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "manifest.xml");
+        }
+
+        private static string ResolveAssemblyVersion()
+        {
+            try
+            {
+                var assembly = typeof(VersionUtil).Assembly;
+                var informationalVersion = assembly
+                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                    ?.InformationalVersion;
+                if (!string.IsNullOrWhiteSpace(informationalVersion))
+                    return informationalVersion;
+
+                var assemblyVersion = assembly.GetName().Version;
+                if (assemblyVersion != null)
+                {
+                    if (assemblyVersion.Revision > 0)
+                        return assemblyVersion.ToString();
+
+                    if (assemblyVersion.Build >= 0)
+                        return string.Format(
+                            "{0}.{1}.{2}",
+                            assemblyVersion.Major,
+                            assemblyVersion.Minor,
+                            assemblyVersion.Build);
+
+                    return string.Format(
+                        "{0}.{1}",
+                        assemblyVersion.Major,
+                        assemblyVersion.Minor);
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogException(
+                    "[VersionUtil] Failed to load version from assembly metadata.",
+                    ex);
+            }
+
+            return "0.0.0";
         }
 
         /// <summary>
@@ -61,8 +101,7 @@ namespace TorchDiscordSync.Plugin.Utils
                     ex);
             }
 
-            // _cachedVersion = "2.0.0";
-            _cachedVersion = MainConfig.Load().PluginVersion; // Fallback to version from config if manifest read fails
+            _cachedVersion = ResolveAssemblyVersion();
             return _cachedVersion;
         }
 

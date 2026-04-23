@@ -30,9 +30,6 @@ namespace TorchDiscordSync.Shared.Ipc
             typeof(DiscordSyncRoleMembersRequest),
             typeof(DiscordUpdateChannelNameRequest),
             typeof(DiscordUpdatePresenceRequest),
-            typeof(DiscordVerificationAttempt),
-            typeof(DiscordVerificationRequest),
-            typeof(DiscordVerificationResultMessage),
         };
 
         private static readonly DataContractSerializer Serializer =

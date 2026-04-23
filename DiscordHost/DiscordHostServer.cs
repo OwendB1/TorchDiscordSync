@@ -35,10 +35,6 @@ namespace TorchDiscordSync.DiscordHost
                 DiscordIpcEvents.MessageReceived,
                 message,
                 CancellationToken.None);
-            _gatewayService.VerificationAttemptReceived += attempt => SendEventAsync(
-                DiscordIpcEvents.VerificationAttempt,
-                attempt,
-                CancellationToken.None);
         }
 
         public async Task<int> RunAsync(CancellationToken cancellationToken)
@@ -224,19 +220,6 @@ namespace TorchDiscordSync.DiscordHost
                             await _gatewayService.SendEmbedMessageAsync((DiscordSendEmbedRequest)request.Payload)
                                 .ConfigureAwait(false));
 
-                    case DiscordIpcOperations.SendVerificationDm:
-                        return Response(
-                            request,
-                            await _gatewayService.SendVerificationDmAsync((DiscordVerificationRequest)request.Payload)
-                                .ConfigureAwait(false));
-
-                    case DiscordIpcOperations.SendVerificationResultDm:
-                        return Response(
-                            request,
-                            await _gatewayService.SendVerificationResultDmAsync(
-                                    (DiscordVerificationResultMessage)request.Payload)
-                                .ConfigureAwait(false));
-
                     case DiscordIpcOperations.CreateRole:
                         return IdResponse(
                             request,
@@ -289,11 +272,6 @@ namespace TorchDiscordSync.DiscordHost
                             request,
                             await _gatewayService.SyncRoleMembersAsync((DiscordSyncRoleMembersRequest)request.Payload)
                                 .ConfigureAwait(false));
-
-                    case DiscordIpcOperations.GetOrCreateVerifiedRole:
-                        return IdResponse(
-                            request,
-                            await _gatewayService.GetOrCreateVerifiedRoleAsync().ConfigureAwait(false));
 
                     case DiscordIpcOperations.UpdateChannelName:
                         return Response(

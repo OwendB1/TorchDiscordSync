@@ -572,9 +572,6 @@ namespace TorchDiscordSync.Plugin.Services
                     {
                         _db.SaveFaction(dbFaction);
                         LoggerUtil.LogSuccess($"[FACTION_SYNC] ✓ Saved faction: {dbFaction.Tag}");
-
-                        // Sync Discord roles for verified players in this faction
-                        await SyncFactionRolesForVerifiedPlayersAsync(dbFaction).ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
@@ -756,34 +753,6 @@ namespace TorchDiscordSync.Plugin.Services
 
                 // Update faction with new channel ID
                 faction.DiscordChannelID = newChannelId;
-
-                // Assign role to faction players
-                if (faction.Players != null && faction.Players.Count > 0)
-                {
-                    foreach (var player in faction.Players)
-                    {
-                        try
-                        {
-                            var verifiedPlayer = _db?.GetVerifiedPlayer(player.SteamID);
-                            if (verifiedPlayer != null)
-                            {
-                                await _discord.AssignRoleToUserAsync(
-                                    verifiedPlayer.DiscordUserID,
-                                    newRoleId
-                                ).ConfigureAwait(false);
-                                LoggerUtil.LogDebug(
-                                    $"[FACTION_SYNC] Assigned new role to {verifiedPlayer.DiscordUsername}"
-                                );
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            LoggerUtil.LogWarning(
-                                $"[FACTION_SYNC] Error assigning role to player {player.SteamID}: {ex.Message}"
-                            );
-                        }
-                    }
-                }
 
                 // Save updated faction to database
                 _db?.SaveFaction(faction);
@@ -1301,61 +1270,6 @@ namespace TorchDiscordSync.Plugin.Services
                 return $"Error: {ex.Message}";
             }
         }
-
-
-        /// <summary>
-        /// Synchronize Discord roles for verified players in a faction
-        /// - Adds faction role to verified players who are in the faction
-        /// - Removes faction role from verified players who are no longer in the faction
-        /// </summary>
-        private async Task SyncFactionRolesForVerifiedPlayersAsync(FactionModel dbFaction)
-        {
-            try
-            {
-                // Get all verified players
-                var verifiedPlayers = _db.GetAllVerifiedPlayers();
-                if (verifiedPlayers == null || verifiedPlayers.Count == 0)
-                {
-                    LoggerUtil.LogDebug("[FACTION_ROLE_SYNC] No verified players to sync");
-                    return;
-                }
-
-                // Get faction member Steam IDs
-                var steamIdsInFaction = new HashSet<long>(dbFaction.Players.Select(p => p.SteamID));
-
-                LoggerUtil.LogInfo(
-                    $"[FACTION_ROLE_SYNC] Syncing roles for faction {dbFaction.Tag} ({dbFaction.Players.Count} members)"
-                );
-
-                var desiredDiscordUserIds = verifiedPlayers
-                    .Where(vp => steamIdsInFaction.Contains(vp.SteamID) && vp.DiscordUserID > 0)
-                    .Select(vp => vp.DiscordUserID)
-                    .Distinct()
-                    .ToList();
-
-                bool synced = await _discord.SyncRoleMembersAsync(
-                    dbFaction.DiscordRoleID,
-                    desiredDiscordUserIds,
-                    dbFaction.Tag).ConfigureAwait(false);
-
-                if (!synced)
-                {
-                    LoggerUtil.LogWarning(
-                        $"[FACTION_ROLE_SYNC] Sync request failed for faction {dbFaction.Tag}"
-                    );
-                    return;
-                }
-
-                LoggerUtil.LogSuccess($"[FACTION_ROLE_SYNC] Completed for faction {dbFaction.Tag}");
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError(
-                    $"[FACTION_ROLE_SYNC] Error syncing roles: {ex.Message}\n{ex.StackTrace}"
-                );
-            }
-        }
-
 
         /// <summary>
         /// Retrieves the display name for a player by their identity ID.

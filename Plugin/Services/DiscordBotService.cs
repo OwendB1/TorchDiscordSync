@@ -47,7 +47,6 @@ namespace TorchDiscordSync.Plugin.Services
         private string _pipeName;
 
         public event Func<DiscordIncomingMessage, Task> OnMessageReceivedEvent;
-        public event Action<string, ulong, string> OnVerificationAttempt;
         public event Action<DiscordConnectionState> OnConnectionStateChanged;
 
         public DiscordBotService(DiscordRuntimeConfig config)
@@ -181,46 +180,6 @@ namespace TorchDiscordSync.Plugin.Services
                 .ConfigureAwait(false);
 
             return response.Payload as DiscordConnectionState ?? new DiscordConnectionState();
-        }
-
-        public async Task<bool> SendVerificationDMAsync(string discordUsername, string verificationCode)
-        {
-            if (!await EnsureStartedAsync().ConfigureAwait(false))
-                return false;
-
-            var response = await SendRequestAsync(
-                    DiscordIpcOperations.SendVerificationDm,
-                    new DiscordVerificationRequest
-                    {
-                        DiscordUsername = discordUsername,
-                        VerificationCode = verificationCode,
-                    })
-                .ConfigureAwait(false);
-
-            return response.Success;
-        }
-
-        public async Task<bool> SendVerificationResultDMAsync(
-            string discordUsername,
-            ulong discordUserID,
-            string resultMessage,
-            bool success)
-        {
-            if (!await EnsureStartedAsync().ConfigureAwait(false))
-                return false;
-
-            var response = await SendRequestAsync(
-                    DiscordIpcOperations.SendVerificationResultDm,
-                    new DiscordVerificationResultMessage
-                    {
-                        DiscordUsername = discordUsername,
-                        DiscordUserId = discordUserID,
-                        Message = resultMessage,
-                        IsSuccess = success,
-                    })
-                .ConfigureAwait(false);
-
-            return response.Success;
         }
 
         public async Task<bool> SendChannelMessageAsync(ulong channelID, string message)
@@ -420,19 +379,6 @@ namespace TorchDiscordSync.Plugin.Services
                 .ConfigureAwait(false);
 
             return response.Success;
-        }
-
-        public async Task<ulong> GetOrCreateVerifiedRoleAsync()
-        {
-            if (!await EnsureStartedAsync().ConfigureAwait(false))
-                return 0;
-
-            var response = await SendRequestAsync(
-                    DiscordIpcOperations.GetOrCreateVerifiedRole,
-                    null)
-                .ConfigureAwait(false);
-
-            return GetIdResult(response);
         }
 
         public async Task<bool> UpdateChannelNameAsync(ulong channelId, string newName)
@@ -638,17 +584,6 @@ namespace TorchDiscordSync.Plugin.Services
                             var message = envelope.Payload as DiscordIncomingMessage;
                             if (message != null)
                                 await OnMessageReceivedEvent.Invoke(message).ConfigureAwait(false);
-                        }
-                        break;
-
-                    case DiscordIpcEvents.VerificationAttempt:
-                        var attempt = envelope.Payload as DiscordVerificationAttempt;
-                        if (attempt != null)
-                        {
-                            OnVerificationAttempt?.Invoke(
-                                attempt.VerificationCode,
-                                attempt.DiscordUserId,
-                                attempt.DiscordUsername);
                         }
                         break;
 

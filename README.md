@@ -26,14 +26,13 @@ Unlike simple chat relays, **TorchDiscordSync** focuses on *deep game integratio
 6. [Player & Death Location](#player--death-location)
 7. [Server Health Monitoring](#server-health-monitoring)
 8. [Discord Admin Commands](#discord-admin-commands)
-9. [Player Verification System](#player-verification-system)
-10. [Data Storage (XML / SQLite)](#data-storage-xml--sqlite)
-11. [Event Logging](#event-logging)
-12. [In-Game Commands `/tds`](#in-game-commands-tds)
-13. [Configuration Overview](#configuration-overview)
-14. [Roadmap & Future Plans](#roadmap--future-plans)
-15. [Contributing](#contributing)
-16. [Support](#support)
+9. [Data Storage (XML / SQLite)](#data-storage-xml--sqlite)
+10. [Event Logging](#event-logging)
+11. [In-Game Commands `/tds`](#in-game-commands-tds)
+12. [Configuration Overview](#configuration-overview)
+13. [Roadmap & Future Plans](#roadmap--future-plans)
+14. [Contributing](#contributing)
+15. [Support](#support)
 
 ---
 
@@ -51,7 +50,6 @@ Unlike simple chat relays, **TorchDiscordSync** focuses on *deep game integratio
 | Death Message Templates | ✅ | Fully configurable per death type |
 | SimSpeed Watchdog | ✅ | Lag-spike alerts with cooldown |
 | Player Count Monitor | ✅ | Discord channel name reflects live count |
-| Player Verification | ✅ | SteamID ↔ Discord UserID secure linking |
 | Discord Admin Commands | ✅ | Admin console from Discord (`!tds ...`) |
 | Data Storage – XML | ✅ | Default, zero-dependency storage |
 | Data Storage – SQLite | ✅ | Opt-in; requires external DLL (see below) |
@@ -88,7 +86,6 @@ Private, isolated communication channels between SE faction chat and Discord.
 Automatically mirrors Space Engineers factions into Discord.
 
 - Creates a Discord **role** and a set of **channels** (text + voice) per faction.
-- Assigns/removes roles from Discord members as players join or leave factions in-game.
 - **Duplicate prevention** — checks for existing roles/channels by name before creating to survive plugin restarts cleanly.
 - **Undo / rollback** — `admin:sync:undo <tag>` and `admin:sync:undo_all` remove all Discord artefacts created for a faction and revert the database record.
 - **Cleanup** — `admin:sync:cleanup` removes orphaned Discord roles/channels that no longer correspond to any known faction.
@@ -197,31 +194,8 @@ A dedicated Discord channel acts as a remote admin console. Post `!tds <subcomma
 | `!tds admin:sync:undo_all` | Undo all faction syncs |
 | `!tds admin:sync:cleanup` | Remove orphaned Discord items |
 | `!tds admin:sync:status` | Summary of current sync state |
-| `!tds admin:verify:list` | List all verified players |
-| `!tds admin:verify:pending` | List pending verifications |
-| `!tds admin:verify:delete <steamid>` | Delete a verification record |
 | `!tds reload` | Reload plugin configuration |
 | `!tds status` | Show plugin status |
-
----
-
-## ✅ Player Verification System
-
-Securely links a Space Engineers SteamID to a Discord UserID via a one-time code exchange.
-
-**Flow:**
-
-1. Player types `/tds verify @DiscordUsername` (or Discord UserID) in-game.
-2. Plugin looks up the Discord user, generates an 8-character random code, stores it with an expiry timestamp, and sends it as a Discord DM.
-3. Player opens the Discord DM and replies `!verify <CODE>` to the bot.
-4. Bot validates the code, marks the player as verified, and assigns the configured Discord role.
-
-| State | Description |
-| :--- | :--- |
-| Not verified | No pending or completed record exists |
-| Pending | Code generated, awaiting Discord reply |
-| Expired | Code past expiry window (configurable, default 15 min) |
-| Verified | SteamID ↔ DiscordID link confirmed |
 
 ---
 
@@ -229,7 +203,7 @@ Securely links a Space Engineers SteamID to a Discord UserID via a one-time code
 
 ### XML (default)
 
-Zero external dependencies. Separate XML files per data type (factions, players, verifications, events). Automatic serialisation via `DatabaseService`.
+Zero external dependencies. Separate XML files per data type (factions, players, chat, events). Automatic serialisation via `DatabaseService`.
 
 ### SQLite (opt-in)
 
@@ -255,7 +229,7 @@ If the DLLs are absent, the plugin falls back to XML automatically without error
 
 Structured log entries are written to the local database (XML or SQLite) and, optionally, to a Discord staff log channel (`config.Discord.StaffLog` channel ID).
 
-Logged event types include: `VerificationAttempt`, `VerificationDeleted`, `UnverifyCommand`, `AdminCommand`, `CommandError`, and more.
+Logged event types include: `AdminCommand`, `CommandError`, server monitoring updates, and more.
 
 ---
 
@@ -269,11 +243,6 @@ All commands are entered in global game chat. The plugin consumes them before th
 | :--- | :--- |
 | `/tds help` | Show help (admin commands visible only to admins) |
 | `/tds status` | Plugin status: bot connectivity, faction count, feature toggles |
-| `/tds verify @Name` | Begin verification with a Discord username |
-| `/tds verify <DiscordID>` | Begin verification with a Discord UserID |
-| `/tds verify:status` | Check verification status and remaining code time |
-| `/tds verify:delete` | Cancel a pending (not completed) verification |
-| `/tds verify:help` | Step-by-step verification guide |
 
 ### Admin Commands
 
@@ -283,15 +252,11 @@ All commands are entered in global game chat. The plugin consumes them before th
 | `/tds sync` | Synchronise all factions to Discord |
 | `/tds reset` | **Destructive** — delete all Discord roles/channels and reset |
 | `/tds cleanup` | Remove orphaned Discord items |
-| `/tds unverify <SteamID> [reason]` | Remove player verification |
 | `/tds admin:sync:check` | Check faction sync status |
 | `/tds admin:sync:undo <tag>` | Undo sync for a specific faction |
 | `/tds admin:sync:undo_all` | Undo all faction syncs |
 | `/tds admin:sync:cleanup` | Clean up orphaned Discord items |
 | `/tds admin:sync:status` | Summary of sync state |
-| `/tds admin:verify:list` | List all verified users |
-| `/tds admin:verify:pending` | List pending verifications |
-| `/tds admin:verify:delete <SteamID>` | Delete any verification record |
 
 ---
 
@@ -318,7 +283,6 @@ Key settings:
 | `Death.Enabled` | Enable/disable death notifications |
 | `SimSpeed.Threshold` | Minimum acceptable sim speed (default `0.9`) |
 | `SimSpeed.AlertWindowSeconds` | Duration below threshold before alert fires (default `30`) |
-| `VerificationCodeExpirationMinutes` | Code validity window (default `15`) |
 | `AdminSteamIDs` | List of Steam IDs with admin command access |
 | `DataStorage.UseSQLite` | Use SQLite instead of XML (default `true` when DLLs present) |
 

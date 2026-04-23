@@ -228,9 +228,6 @@ namespace TorchDiscordSync.Plugin.Handlers
                     case "status":
                         _tdsCommands.ShowStatus(request);
                         return;
-                    case "verify":
-                        HandleLegacyVerifyCommand(tokens, request);
-                        return;
                     case "sync":
                         _tdsCommands.RunFullSync(request);
                         return;
@@ -242,12 +239,6 @@ namespace TorchDiscordSync.Plugin.Handlers
                         return;
                     case "reload":
                         _tdsCommands.RunReload(request);
-                        return;
-                    case "unverify":
-                        _tdsCommands.RunUnverify(
-                            request,
-                            tokens.Count > 1 ? tokens[1] : null,
-                            tokens.Count > 2 ? string.Join(" ", tokens.Skip(2)) : "Admin removal");
                         return;
                     default:
                         ChatUtils.SendError("Unknown command. Use !tds help or /tds help.", playerSteamId);
@@ -303,31 +294,6 @@ namespace TorchDiscordSync.Plugin.Handlers
                 HandleLegacyFactionChatMessage(faction, msg);
         }
 
-        private void HandleLegacyVerifyCommand(IReadOnlyList<string> tokens, TdsCommandRequest request)
-        {
-            if (tokens.Count == 1)
-            {
-                _tdsCommands.StartVerification(request, null);
-                return;
-            }
-
-            switch (tokens[1])
-            {
-                case "status":
-                    _tdsCommands.ShowVerificationStatus(request);
-                    return;
-                case "delete":
-                    _tdsCommands.DeletePendingVerification(request);
-                    return;
-                case "help":
-                    _tdsCommands.ShowVerificationHelp(request);
-                    return;
-                default:
-                    _tdsCommands.StartVerification(request, tokens[1]);
-                    return;
-            }
-        }
-
         private bool TryHandleLegacyAdminCommand(IReadOnlyList<string> tokens, TdsCommandRequest request)
         {
             if (tokens.Count == 0 || tokens[0] != "admin")
@@ -367,28 +333,6 @@ namespace TorchDiscordSync.Plugin.Handlers
                 }
             }
 
-            if (tokens[1] == "verify")
-            {
-                if (tokens.Count < 3)
-                {
-                    _tdsCommands.ShowHelp(request);
-                    return true;
-                }
-
-                switch (tokens[2])
-                {
-                    case "list":
-                        _tdsCommands.ListVerifiedUsers(request);
-                        return true;
-                    case "pending":
-                        _tdsCommands.ListPendingVerifications(request);
-                        return true;
-                    case "delete":
-                        _tdsCommands.DeleteVerificationRecord(request, tokens.Count > 3 ? tokens[3] : null);
-                        return true;
-                }
-            }
-
             switch (tokens[1])
             {
                 case "reset":
@@ -399,12 +343,6 @@ namespace TorchDiscordSync.Plugin.Handlers
                     return true;
                 case "reload":
                     _tdsCommands.RunReload(request);
-                    return true;
-                case "unverify":
-                    _tdsCommands.RunUnverify(
-                        request,
-                        tokens.Count > 2 ? tokens[2] : null,
-                        tokens.Count > 3 ? string.Join(" ", tokens.Skip(3)) : "Admin removal");
                     return true;
             }
 

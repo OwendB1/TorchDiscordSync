@@ -9,11 +9,6 @@ namespace TorchDiscordSync.Plugin.Config
     [XmlRoot("MainConfig")]
     public class MainConfig
     {
-        // ===================================================================
-        // VERSION (Managed by build.py)
-        // ===================================================================
-        public string PluginVersion { get; set; } = "2.4.47";
-
         // Static field for instance-specific config directory name
         // ============================================================
         // CENTRAL PATH MANAGEMENT - Single Point of Control
@@ -191,10 +186,6 @@ namespace TorchDiscordSync.Plugin.Config
         [XmlElement]
         public FactionConfig Faction { get; set; }
 
-        // ========== VERIFICATION SETTINGS ==========
-        [XmlElement]
-        public int VerificationCodeExpirationMinutes { get; set; } = 15;
-
         // ========== SERVICE CLEANUP INTERVALS (TASK 1) ==========
         /// <summary>
         /// Cleanup interval for services (in seconds)
@@ -322,15 +313,6 @@ namespace TorchDiscordSync.Plugin.Config
         public ulong GuildID { get; set; }
 
         [XmlElement]
-        public string BotPrefix { get; set; }
-
-        [XmlElement]
-        public bool EnableDMNotifications { get; set; }
-
-        [XmlElement]
-        public int VerificationCodeExpirationMinutes { get; set; }
-
-        [XmlElement]
         public ulong ChatChannelId { get; set; }
 
         [XmlElement]
@@ -360,9 +342,6 @@ namespace TorchDiscordSync.Plugin.Config
         public ulong AdminBotChannelId { get; set; }
 
         [XmlElement]
-        public ulong VerifiedRoleId { get; set; }
-
-        [XmlElement]
         public int PresenceUpdateIntervalSeconds { get; set; }
 
         public DiscordConfig()
@@ -370,9 +349,6 @@ namespace TorchDiscordSync.Plugin.Config
             SyncIntervalSeconds = 30;
             BotToken = "YOUR_BOT_TOKEN";
             GuildID = 0;
-            BotPrefix = "!";
-            EnableDMNotifications = true;
-            VerificationCodeExpirationMinutes = 15;
             ChatChannelId = 0;
             StaffLog = 0;
             StatusChannelId = 0;
@@ -381,7 +357,6 @@ namespace TorchDiscordSync.Plugin.Config
             FactionCategoryId = 0;
             AdminAlertChannelId = 1470032530139906178;
             AdminBotChannelId   = 1478357809044131980;
-            VerifiedRoleId = 0;
             PresenceUpdateIntervalSeconds = 1;
         }
     }

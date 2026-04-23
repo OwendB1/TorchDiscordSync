@@ -1,12 +1,10 @@
 // Plugin/index.cs
 
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Timers;
 using Sandbox.Game;
-using Sandbox.ModAPI;
 using Torch;
 using Torch.API;
 using Torch.API.Managers;
@@ -18,17 +16,18 @@ using TorchDiscordSync.Plugin.Handlers;
 using TorchDiscordSync.Plugin.Services;
 using TorchDiscordSync.Plugin.Utils;
 using TorchDiscordSync.Shared.Ipc;
-using VRage.Game.ModAPI;
 
 namespace TorchDiscordSync
 {
     /// <summary>
     /// TorchDiscordSync.Plugin – Space Engineers faction/Discord sync plugin.
     /// Features: faction sync, bidirectional chat relay, death logging, server
-    /// monitoring, player verification, and admin commands.
+    /// monitoring, and admin commands.
     /// </summary>
     public class TorchDiscordSyncPlugin : TorchPluginBase
     {
+        private const string LegacyDiscordTextCommandPrefix = "!";
+
         // ---- core services ----
         private DatabaseService             _db;
         private FactionSyncService          _factionSync;
@@ -38,8 +37,6 @@ namespace TorchDiscordSync
         private ITorchBase                  _torch;
         private ChatSyncService             _chatSync;
         private DeathLogService             _deathLog;
-        private VerificationService         _verification;
-        private VerificationCommandHandler  _verificationCommandHandler;
         private SyncOrchestrator            _orchestrator;
         private DeathMessageHandler         _deathMessageHandler;
         private PlayerTrackingService       _playerTracking;
@@ -105,10 +102,6 @@ namespace TorchDiscordSync
                 _discordPresenceService = new DiscordPresenceService(_config, _discordWrapper);
                 Task.Run(delegate { return ConnectBotAsync(); });
 
-                // ---- verification ----
-                _verification = new VerificationService(
-                    _db, _config.VerificationCodeExpirationMinutes);
-
                 // ---- event logging ----
                 _eventLog = new EventLoggingService(_db, _discordWrapper, _config);
 
@@ -167,10 +160,12 @@ namespace TorchDiscordSync
                             return;
                         }
 
-                        // Ignore bots and bot-prefix commands for all other channels
+                        // Ignore bots and legacy text commands for all other channels
                         if (msg.AuthorIsBot ||
                             string.IsNullOrWhiteSpace(msg.Content) ||
-                            msg.Content.StartsWith(_config.Discord.BotPrefix))
+                            msg.Content.StartsWith(
+                                LegacyDiscordTextCommandPrefix,
+                                StringComparison.Ordinal))
                             return;
 
                         ulong channelId = msg.ChannelId;
@@ -206,12 +201,10 @@ namespace TorchDiscordSync
                 }
 
                 // ---- orchestrator ----
-                _orchestrator = new SyncOrchestrator(
-                    _db, _discordWrapper, _factionSync, _eventLog, _config);
+                _orchestrator = new SyncOrchestrator(_db, _discordWrapper, _factionSync, _eventLog, _config);
 
                 // ---- admin Discord command service ----
-                _adminCommandService = new DiscordAdminCommandService(
-                    _discordWrapper, _db, _factionSync, _orchestrator, _eventLog, _config);
+                _adminCommandService = new DiscordAdminCommandService(_discordWrapper, _db, _factionSync, _orchestrator, _eventLog, _config);
                 if (_config.Discord.AdminBotChannelId > 0)
                     LoggerUtil.LogSuccess(
                         "[INIT] DiscordAdminCommandService ready – admin channel ID: " +
@@ -220,19 +213,13 @@ namespace TorchDiscordSync
                     LoggerUtil.LogWarning(
                         "[INIT] DiscordAdminCommandService: AdminBotChannelId not set – Discord admin commands disabled");
 
-                // ---- verification command handler ----
-                _verificationCommandHandler = new VerificationCommandHandler(
-                    _verification, _eventLog, _config, _discordWrapper);
-                LoggerUtil.LogInfo("[INIT] VerificationCommandHandler created and ready");
-
                 _tdsCommandService = new TdsCommandService(
                     this,
                     _config,
                     _db,
                     _factionSync,
                     _eventLog,
-                    _orchestrator,
-                    _verificationCommandHandler);
+                    _orchestrator);
 
                 // ---- command processor (chat routing + legacy /tds bridge) ----
                 _commandProcessor = new CommandProcessor(
@@ -248,19 +235,6 @@ namespace TorchDiscordSync
                 _eventManager = new EventManager(_config, _discordWrapper, _eventLog);
 
                 LoggerUtil.LogSuccess("All services initialized");
-
-                // ---- Discord bot verification event ----
-                if (_discordBot != null)
-                {
-                    _discordBot.OnVerificationAttempt += delegate(
-                        string code, ulong discordID, string discordUsername)
-                    {
-                        Task.Run(delegate
-                        {
-                            return HandleVerificationAsync(code, discordID, discordUsername);
-                        });
-                    };
-                }
 
                 // ---- session state callback ----
                 var sessionManagerObj =
@@ -416,11 +390,9 @@ namespace TorchDiscordSync
             _config.Death = newConfig.Death;
             _config.Monitoring = newConfig.Monitoring;
             _config.Faction = newConfig.Faction;
-            _config.VerificationCodeExpirationMinutes = newConfig.VerificationCodeExpirationMinutes;
             _config.CleanupIntervalSeconds = newConfig.CleanupIntervalSeconds;
             _config.DamageHistoryMaxSeconds = newConfig.DamageHistoryMaxSeconds;
             _config.DataStorage = newConfig.DataStorage;
-            _config.PluginVersion = newConfig.PluginVersion;
             LoggerUtil.SetDebugMode(_config.Debug);
 
             if (_config.Discord != null)
@@ -732,136 +704,14 @@ namespace TorchDiscordSync
             });
         }
 
-        /// <summary>
-        /// Handle a verification attempt initiated from the Discord side.
-        /// Assigns roles on success and notifies the player both via Discord DM
-        /// and an in-game private message.
-        /// </summary>
-        private async Task HandleVerificationAsync(
-            string code, ulong discordID, string discordUsername)
-        {
-            if (_verificationCommandHandler == null)
-                return;
-
-            try
-            {
-                var result = await _verificationCommandHandler
-                    .VerifyFromDiscordAsync(code, discordID, discordUsername).ConfigureAwait(false);
-                bool isSuccess = result.IsSuccess;
-                LoggerUtil.LogInfo("[VERIFY] Verification result: " + result.Message);
-
-                var verifiedPlayer = isSuccess
-                    ? _db?.GetVerifiedPlayerByDiscordID(discordID)
-                    : null;
-
-                if (isSuccess && verifiedPlayer != null && _discordWrapper != null)
-                {
-                    ulong verifiedRoleId = await _discordWrapper.GetOrCreateVerifiedRoleAsync().ConfigureAwait(false);
-                    if (verifiedRoleId != 0)
-                    {
-                        _config.Discord.VerifiedRoleId = verifiedRoleId;
-                        _config.Save();
-
-                        bool roleAssigned = await _discordWrapper.AssignRoleToUserAsync(
-                            discordID,
-                            verifiedRoleId).ConfigureAwait(false);
-                        if (roleAssigned)
-                            LoggerUtil.LogSuccess(
-                                "[VERIFY] Assigned Verified role to " + discordUsername);
-                    }
-
-                    if (_db != null)
-                    {
-                        var playerFaction = _db.GetAllFactions()?.FirstOrDefault(f =>
-                            f.Players != null &&
-                            f.Players.Any(p => p.SteamID == verifiedPlayer.SteamID));
-
-                        if (playerFaction != null && playerFaction.DiscordRoleID > 0)
-                        {
-                            bool factionRoleAssigned = await _discordWrapper.AssignRoleToUserAsync(
-                                discordID,
-                                playerFaction.DiscordRoleID).ConfigureAwait(false);
-                            if (factionRoleAssigned)
-                            {
-                                LoggerUtil.LogSuccess(string.Format(
-                                    "[VERIFY] Assigned faction role '{0}' to {1}",
-                                    playerFaction.Tag,
-                                    discordUsername));
-                            }
-                        }
-                    }
-                }
-
-                if (_discordWrapper != null)
-                {
-                    await _discordWrapper.SendVerificationResultDMAsync(
-                        discordUsername,
-                        discordID,
-                        result.Message,
-                        isSuccess).ConfigureAwait(false);
-                    LoggerUtil.LogDebug(
-                        "[VERIFY] Sent verification result DM to " + discordUsername);
-                }
-
-                if (result.SteamIdForNotify.HasValue &&
-                    !string.IsNullOrEmpty(result.GamePlayerName))
-                {
-                    SendInGameNotification(
-                        result.SteamIdForNotify.Value,
-                        result.GamePlayerName,
-                        isSuccess,
-                        result.Message);
-                }
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError(
-                    "[VERIFY] Error in HandleVerificationAsync: " + ex.Message);
-            }
-        }
-
         private DiscordRuntimeConfig CreateDiscordRuntimeConfig()
         {
             return new DiscordRuntimeConfig
             {
                 BotToken = _config?.Discord?.BotToken,
                 GuildId = _config?.Discord?.GuildID ?? 0,
-                BotPrefix = _config?.Discord?.BotPrefix ?? "!",
-                EnableDmNotifications = _config?.Discord?.EnableDMNotifications ?? true,
-                VerificationCodeExpirationMinutes =
-                    _config?.Discord?.VerificationCodeExpirationMinutes ?? 15,
                 AdminBotChannelId = _config?.Discord?.AdminBotChannelId ?? 0,
             };
-        }
-
-        /// <summary>
-        /// Send an in-game private chat notification to a player about their
-        /// verification result.  Only visible to the target player.
-        /// </summary>
-        private void SendInGameNotification(
-            long steamID, string playerName, bool isSuccess, string message)
-        {
-            try
-            {
-                var players = new List<IMyPlayer>();
-                MyAPIGateway.Players.GetPlayers(players);
-
-                var player = players.FirstOrDefault(p => (long)p.SteamUserId == steamID);
-                if (player?.Character == null)
-                    return;
-
-                string notificationMsg = isSuccess
-                    ? "[OK] Verification successful! Discord account linked."
-                    : "[FAIL] Verification failed: " + message;
-
-                MyVisualScriptLogicProvider.SendChatMessage(
-                    notificationMsg, "TDS", player.Character.EntityId, "Blue");
-                LoggerUtil.LogSuccess("[VERIFY_NOTIFY] Sent to " + playerName);
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[VERIFY_NOTIFY] Error: " + ex.Message);
-            }
         }
     }
 }

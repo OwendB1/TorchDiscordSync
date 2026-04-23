@@ -32,35 +32,6 @@ namespace TorchDiscordSync.Plugin.Commands
             Plugin.CommandService.ShowStatus(CreateRequest());
         }
 
-        [Command("tds verify", "Start Discord verification")]
-        [Permission(MyPromoteLevel.None)]
-        public void Verify()
-        {
-            string identity = Context.Args.FirstOrDefault();
-            Plugin.CommandService.StartVerification(CreateRequest(), identity);
-        }
-
-        [Command("tds verify status", "Show your verification status")]
-        [Permission(MyPromoteLevel.None)]
-        public void VerifyStatus()
-        {
-            Plugin.CommandService.ShowVerificationStatus(CreateRequest());
-        }
-
-        [Command("tds verify delete", "Delete your pending verification")]
-        [Permission(MyPromoteLevel.None)]
-        public void VerifyDelete()
-        {
-            Plugin.CommandService.DeletePendingVerification(CreateRequest());
-        }
-
-        [Command("tds verify help", "Show verification help")]
-        [Permission(MyPromoteLevel.None)]
-        public void VerifyHelp()
-        {
-            Plugin.CommandService.ShowVerificationHelp(CreateRequest());
-        }
-
         [Command("tds admin sync", "Synchronize factions to Discord")]
         [Permission(MyPromoteLevel.Admin)]
         public void AdminSync()
@@ -122,37 +93,6 @@ namespace TorchDiscordSync.Plugin.Commands
         public void AdminReload()
         {
             Plugin.CommandService.RunReload(CreateRequest());
-        }
-
-        [Command("tds admin unverify", "Remove a verification")]
-        [Permission(MyPromoteLevel.Admin)]
-        public void AdminUnverify()
-        {
-            string steamId = Context.Args.Count > 0 ? Context.Args[0] : null;
-            string reason = Context.Args.Count > 1 ? string.Join(" ", Context.Args.Skip(1)) : "Admin removal";
-            Plugin.CommandService.RunUnverify(CreateRequest(), steamId, reason);
-        }
-
-        [Command("tds admin verify list", "List verified users")]
-        [Permission(MyPromoteLevel.Admin)]
-        public void AdminVerifyList()
-        {
-            Plugin.CommandService.ListVerifiedUsers(CreateRequest());
-        }
-
-        [Command("tds admin verify pending", "List pending verifications")]
-        [Permission(MyPromoteLevel.Admin)]
-        public void AdminVerifyPending()
-        {
-            Plugin.CommandService.ListPendingVerifications(CreateRequest());
-        }
-
-        [Command("tds admin verify delete", "Delete a verification record")]
-        [Permission(MyPromoteLevel.Admin)]
-        public void AdminVerifyDelete()
-        {
-            string steamId = Context.Args.FirstOrDefault();
-            Plugin.CommandService.DeleteVerificationRecord(CreateRequest(), steamId);
         }
 
         private TdsCommandRequest CreateRequest()

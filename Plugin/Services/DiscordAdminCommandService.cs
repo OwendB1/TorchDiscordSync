@@ -200,171 +200,16 @@ namespace TorchDiscordSync.Plugin.Services
                             break;
                         }
 
-                    case "verify:list":
-                        {
-                            var verified = _db?.GetAllVerifiedPlayers();
-                            if (verified == null || verified.Count == 0)
-                            {
-                                await ReplyInfoAsync(msg, "verify:list", "No verified users found.").ConfigureAwait(false);
-                                break;
-                            }
-
-                            var sb = new StringBuilder();
-                            int i = 1;
-                            foreach (var v in verified)
-                            {
-                                sb.AppendLine(
-                                    $"{i++}. **{EscapeMd(v.DiscordUsername)}** | SteamID: `{v.SteamID}` | " +
-                                    $"Player: {EscapeMd(v.GamePlayerName ?? "?")} | " +
-                                    $"Since: {v.VerifiedAt:yyyy-MM-dd HH:mm}");
-                            }
-
-                            await ReplyInfoAsync(
-                                msg,
-                                $"verify:list ({verified.Count} users)",
-                                sb.ToString()).ConfigureAwait(false);
-                            break;
-                        }
-
-                    case "verify:pending":
-                        {
-                            var pending = _db?.GetAllPendingVerifications();
-                            if (pending == null || pending.Count == 0)
-                            {
-                                await ReplyInfoAsync(msg, "verify:pending", "No pending verifications.").ConfigureAwait(false);
-                                break;
-                            }
-
-                            var sb = new StringBuilder();
-                            int i = 1;
-                            foreach (var p in pending)
-                            {
-                                var left = p.ExpiresAt - DateTime.UtcNow;
-                                string timeLeft = left.TotalSeconds > 0
-                                    ? $"{(int)left.TotalMinutes}m {left.Seconds}s left"
-                                    : "expired";
-                                sb.AppendLine(
-                                    $"{i++}. **{EscapeMd(p.DiscordUsername)}** | SteamID: `{p.SteamID}` | " +
-                                    $"Code: `{p.VerificationCode}` | {timeLeft}");
-                            }
-
-                            await ReplyInfoAsync(
-                                msg,
-                                $"verify:pending ({pending.Count})",
-                                sb.ToString()).ConfigureAwait(false);
-                            break;
-                        }
-
-                    case "verify:delete":
-                        {
-                            if (parts.Length < 2)
-                            {
-                                await ReplyErrorAsync(
-                                    msg,
-                                    "verify:delete",
-                                    "Usage: `/tds verify delete steamid:<SteamID>`").ConfigureAwait(false);
-                                return;
-                            }
-
-                            if (!long.TryParse(parts[1], out long delSteamId))
-                            {
-                                await ReplyErrorAsync(
-                                    msg,
-                                    "verify:delete",
-                                    $"Invalid SteamID: `{parts[1]}`").ConfigureAwait(false);
-                                return;
-                            }
-
-                            var verified = _db?.GetVerifiedPlayer(delSteamId);
-                            var pending = _db?.GetPendingVerification(delSteamId);
-                            if (verified == null && pending == null)
-                            {
-                                await ReplyErrorAsync(
-                                    msg,
-                                    "verify:delete",
-                                    $"No verification record found for SteamID `{delSteamId}`").ConfigureAwait(false);
-                                return;
-                            }
-
-                            string name =
-                                verified?.DiscordUsername
-                                ?? pending?.DiscordUsername
-                                ?? delSteamId.ToString();
-                            _db?.DeletePendingVerification(delSteamId);
-                            _db?.DeleteVerifiedPlayer(delSteamId);
-                            await ReplySuccessAsync(
-                                msg,
-                                "verify:delete",
-                                $"Verification removed for **{EscapeMd(name)}** (SteamID: `{delSteamId}`)").ConfigureAwait(false);
-                            LoggerUtil.LogInfo(
-                                $"[ADMIN_BOT] {authorTag} deleted verification for {delSteamId}");
-                            break;
-                        }
-
-                    case "unverify":
-                        {
-                            if (parts.Length < 2)
-                            {
-                                await ReplyErrorAsync(
-                                    msg,
-                                    "unverify",
-                                    "Usage: `/tds unverify steamid:<SteamID> [reason]`").ConfigureAwait(false);
-                                return;
-                            }
-
-                            if (!long.TryParse(parts[1], out long unverifySteamId))
-                            {
-                                await ReplyErrorAsync(
-                                    msg,
-                                    "unverify",
-                                    $"Invalid SteamID: `{parts[1]}`").ConfigureAwait(false);
-                                return;
-                            }
-
-                            string reason = parts.Length > 2
-                                ? string.Join(" ", parts.Skip(2))
-                                : "Removed by Discord admin";
-                            var verified = _db?.GetVerifiedPlayer(unverifySteamId);
-                            var pending = _db?.GetPendingVerification(unverifySteamId);
-                            if (verified == null && pending == null)
-                            {
-                                await ReplyErrorAsync(
-                                    msg,
-                                    "unverify",
-                                    $"No verification record found for SteamID `{unverifySteamId}`").ConfigureAwait(false);
-                                return;
-                            }
-
-                            string name =
-                                verified?.DiscordUsername
-                                ?? pending?.DiscordUsername
-                                ?? unverifySteamId.ToString();
-                            _db?.DeletePendingVerification(unverifySteamId);
-                            _db?.DeleteVerifiedPlayer(unverifySteamId);
-                            await ReplySuccessAsync(
-                                msg,
-                                "unverify",
-                                $"Verification removed for **{EscapeMd(name)}** (SteamID: `{unverifySteamId}`)\nReason: {EscapeMd(reason)}").ConfigureAwait(false);
-                            _ = _eventLog?.LogAsync(
-                                "UnverifyCommand",
-                                $"Discord admin {authorTag} | unverified {unverifySteamId} | Reason: {reason}");
-                            break;
-                        }
-
                     case "status":
                         {
                             var factions = _db?.GetAllFactions();
                             int totalFactions = factions?.Count ?? 0;
                             int totalPlayers = factions?.Sum(f => f.Players?.Count ?? 0) ?? 0;
                             int synced = factions?.Count(f => f.SyncStatus == "Synced") ?? 0;
-                            int verified = _db?.GetAllVerifiedPlayers()?.Count ?? 0;
-                            int pending = _db?.GetAllPendingVerifications()?.Count ?? 0;
 
                             var sb = new StringBuilder();
                             sb.AppendLine($"**Factions:** {totalFactions} ({synced} synced)");
                             sb.AppendLine($"**Players tracked:** {totalPlayers}");
-                            sb.AppendLine($"**Verified players:** {verified}");
-                            sb.AppendLine($"**Pending verifications:** {pending}");
                             sb.AppendLine($"**Chat sync:** {(_config?.Chat?.Enabled == true ? "YES" : "NO")}");
                             sb.AppendLine($"**Death logging:** {(_config?.Death?.Enabled == true ? "YES" : "NO")}");
                             await ReplyInfoAsync(msg, "status", sb.ToString()).ConfigureAwait(false);
@@ -409,17 +254,6 @@ namespace TorchDiscordSync.Plugin.Services
                         + "`/tds cleanup`\n"
                         + "`/tds sync undo faction-tag:<TAG>`\n"
                         + "`/tds sync undoall`",
-                    Inline = false,
-                });
-            embed.Fields.Add(
-                new DiscordEmbedFieldModel
-                {
-                    Name = "Verification Commands",
-                    Value =
-                        "`/tds verify list`\n"
-                        + "`/tds verify pending`\n"
-                        + "`/tds verify delete steamid:<SteamID>`\n"
-                        + "`/tds unverify steamid:<SteamID> [reason]`",
                     Inline = false,
                 });
             embed.Fields.Add(

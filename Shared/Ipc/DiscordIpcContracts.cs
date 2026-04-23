@@ -19,8 +19,6 @@ namespace TorchDiscordSync.Shared.Ipc
         public const string GetConnectionState = "GetConnectionState";
         public const string SendChannelMessage = "SendChannelMessage";
         public const string SendEmbedMessage = "SendEmbedMessage";
-        public const string SendVerificationDm = "SendVerificationDm";
-        public const string SendVerificationResultDm = "SendVerificationResultDm";
         public const string CreateRole = "CreateRole";
         public const string DeleteRole = "DeleteRole";
         public const string GetRoleInfo = "GetRoleInfo";
@@ -31,14 +29,12 @@ namespace TorchDiscordSync.Shared.Ipc
         public const string FindChannelByName = "FindChannelByName";
         public const string AssignRole = "AssignRole";
         public const string SyncRoleMembers = "SyncRoleMembers";
-        public const string GetOrCreateVerifiedRole = "GetOrCreateVerifiedRole";
         public const string UpdateChannelName = "UpdateChannelName";
     }
 
     public static class DiscordIpcEvents
     {
         public const string MessageReceived = "MessageReceived";
-        public const string VerificationAttempt = "VerificationAttempt";
         public const string ConnectionStateChanged = "ConnectionStateChanged";
     }
 
@@ -90,15 +86,6 @@ namespace TorchDiscordSync.Shared.Ipc
         public ulong GuildId { get; set; }
 
         [DataMember(Order = 3)]
-        public string BotPrefix { get; set; }
-
-        [DataMember(Order = 4)]
-        public bool EnableDmNotifications { get; set; }
-
-        [DataMember(Order = 5)]
-        public int VerificationCodeExpirationMinutes { get; set; }
-
-        [DataMember(Order = 6)]
         public ulong AdminBotChannelId { get; set; }
     }
 
@@ -127,32 +114,6 @@ namespace TorchDiscordSync.Shared.Ipc
 
         [DataMember(Order = 2)]
         public string Content { get; set; }
-    }
-
-    [DataContract]
-    public sealed class DiscordVerificationRequest
-    {
-        [DataMember(Order = 1)]
-        public string DiscordUsername { get; set; }
-
-        [DataMember(Order = 2)]
-        public string VerificationCode { get; set; }
-    }
-
-    [DataContract]
-    public sealed class DiscordVerificationResultMessage
-    {
-        [DataMember(Order = 1)]
-        public string DiscordUsername { get; set; }
-
-        [DataMember(Order = 2)]
-        public ulong DiscordUserId { get; set; }
-
-        [DataMember(Order = 3)]
-        public string Message { get; set; }
-
-        [DataMember(Order = 4)]
-        public bool IsSuccess { get; set; }
     }
 
     [DataContract]
@@ -351,16 +312,4 @@ namespace TorchDiscordSync.Shared.Ipc
         public bool AuthorIsBot { get; set; }
     }
 
-    [DataContract]
-    public sealed class DiscordVerificationAttempt
-    {
-        [DataMember(Order = 1)]
-        public string VerificationCode { get; set; }
-
-        [DataMember(Order = 2)]
-        public ulong DiscordUserId { get; set; }
-
-        [DataMember(Order = 3)]
-        public string DiscordUsername { get; set; }
-    }
 }

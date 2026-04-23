@@ -112,48 +112,6 @@ namespace TorchDiscordSync.Plugin.Services
             }
         }
 
-        public async Task<bool> SendVerificationDMAsync(string discordUsername, string verificationCode)
-        {
-            try
-            {
-                if (_botService == null)
-                    return false;
-
-                return await _botService.SendVerificationDMAsync(discordUsername, verificationCode)
-                    .ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD] Verification DM error: " + ex.Message);
-                return false;
-            }
-        }
-
-        public async Task<bool> SendVerificationResultDMAsync(
-            string discordUsername,
-            ulong discordUserID,
-            string resultMessage,
-            bool success)
-        {
-            try
-            {
-                if (_botService == null)
-                    return false;
-
-                return await _botService.SendVerificationResultDMAsync(
-                        discordUsername,
-                        discordUserID,
-                        resultMessage,
-                        success)
-                    .ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD] Verification result DM error: " + ex.Message);
-                return false;
-            }
-        }
-
         public async Task<ulong> CreateRoleAsync(string roleName)
         {
             try
@@ -339,21 +297,6 @@ namespace TorchDiscordSync.Plugin.Services
             {
                 LoggerUtil.LogError("[DISCORD] Sync role members error: " + ex.Message);
                 return false;
-            }
-        }
-
-        public async Task<ulong> GetOrCreateVerifiedRoleAsync()
-        {
-            try
-            {
-                return _botService != null
-                    ? await _botService.GetOrCreateVerifiedRoleAsync().ConfigureAwait(false)
-                    : 0;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD] Verified role error: " + ex.Message);
-                return 0;
             }
         }
 

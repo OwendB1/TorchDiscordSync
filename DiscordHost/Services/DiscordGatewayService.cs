@@ -13,6 +13,8 @@ namespace TorchDiscordSync.DiscordHost.Services
 {
     internal sealed class DiscordGatewayService
     {
+        private const string LegacyTextCommandPrefix = "!";
+
         private readonly SemaphoreSlim _stateLock = new(1, 1);
         private DiscordRuntimeConfig _config;
         private DiscordSocketClient _client;
@@ -25,7 +27,6 @@ namespace TorchDiscordSync.DiscordHost.Services
         private int _isReconnecting;
 
         public event Func<DiscordIncomingMessage, Task> MessageReceived;
-        public event Func<DiscordVerificationAttempt, Task> VerificationAttemptReceived;
         public event Func<DiscordConnectionState, Task> ConnectionStateChanged;
 
         public DiscordConnectionState GetConnectionState()
@@ -85,81 +86,6 @@ namespace TorchDiscordSync.DiscordHost.Services
             finally
             {
                 _stateLock.Release();
-            }
-        }
-
-        public async Task<bool> SendVerificationDmAsync(DiscordVerificationRequest request)
-        {
-            try
-            {
-                if (!EnsureReady())
-                    return false;
-
-                var user = FindUserByUsername(request.DiscordUsername);
-                if (user == null)
-                {
-                    HostLogger.Warn("Verification DM target not found: " + request.DiscordUsername);
-                    return false;
-                }
-
-                var dmChannel = await user.CreateDMChannelAsync().ConfigureAwait(false);
-                if (dmChannel == null) return false;
-
-                var embed = new EmbedBuilder()
-                    .WithColor(Color.Green)
-                    .WithTitle("Verification Request")
-                    .WithDescription(
-                        "Someone has requested to link your Discord account to a Space Engineers account.")
-                    .AddField("Verification Code", "```" + request.VerificationCode + "```")
-                    .AddField(
-                        "Complete Verification",
-                        "Use `/verify` in Discord and paste the code above.")
-                    .AddField(
-                        "Expires",
-                        $"This code will expire in {_config.VerificationCodeExpirationMinutes} minutes")
-                    .WithFooter("If you didn't request this, ignore this message")
-                    .WithTimestamp(DateTime.UtcNow)
-                    .Build();
-
-                await dmChannel.SendMessageAsync(embed: embed).ConfigureAwait(false);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                HostLogger.Error("SendVerificationDmAsync failed: " + ex.Message);
-                return false;
-            }
-        }
-
-        public async Task<bool> SendVerificationResultDmAsync(DiscordVerificationResultMessage request)
-        {
-            try
-            {
-                if (!EnsureReady())
-                    return false;
-
-                var user = _client.GetUser(request.DiscordUserId);
-                if (user == null)
-                    return false;
-
-                var dmChannel = await user.CreateDMChannelAsync().ConfigureAwait(false);
-                if (dmChannel == null)
-                    return false;
-
-                var embed = new EmbedBuilder()
-                    .WithColor(request.IsSuccess ? Color.Green : Color.Red)
-                    .WithTitle(request.IsSuccess ? "Verification Successful" : "Verification Failed")
-                    .WithDescription(request.Message)
-                    .WithTimestamp(DateTime.UtcNow)
-                    .Build();
-
-                await dmChannel.SendMessageAsync(embed: embed).ConfigureAwait(false);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                HostLogger.Error("SendVerificationResultDmAsync failed: " + ex.Message);
-                return false;
             }
         }
 
@@ -466,33 +392,6 @@ namespace TorchDiscordSync.DiscordHost.Services
             }
         }
 
-        public async Task<ulong> GetOrCreateVerifiedRoleAsync()
-        {
-            try
-            {
-                var guild = GetGuild();
-                if (guild == null)
-                    return 0;
-
-                var role = guild.Roles.FirstOrDefault(r =>
-                    string.Equals(r.Name, "Verified", StringComparison.OrdinalIgnoreCase));
-                if (role != null)
-                    return role.Id;
-
-                var created = await guild.CreateRoleAsync(
-                    "Verified",
-                    color: new Color(0, 176, 240),
-                    isHoisted: false,
-                    isMentionable: false).ConfigureAwait(false);
-                return created.Id;
-            }
-            catch (Exception ex)
-            {
-                HostLogger.Error("GetOrCreateVerifiedRoleAsync failed: " + ex.Message);
-                return 0;
-            }
-        }
-
         public async Task<bool> UpdateChannelNameAsync(DiscordUpdateChannelNameRequest request)
         {
             try
@@ -555,8 +454,7 @@ namespace TorchDiscordSync.DiscordHost.Services
             var config = new DiscordSocketConfig
             {
                 GatewayIntents =
-                    GatewayIntents.DirectMessages
-                    | GatewayIntents.Guilds
+                    GatewayIntents.Guilds
                     | GatewayIntents.GuildMessages
                     | GatewayIntents.GuildMembers
                     | GatewayIntents.GuildPresences
@@ -570,7 +468,6 @@ namespace TorchDiscordSync.DiscordHost.Services
             _client.Disconnected += OnBotDisconnected;
             _client.MessageReceived += OnMessageReceivedAsync;
             _client.SlashCommandExecuted += OnSlashCommandExecutedAsync;
-            _client.UserJoined += OnUserJoinedAsync;
 
             await _client.LoginAsync(TokenType.Bot, _config.BotToken).ConfigureAwait(false);
             await _client.StartAsync().ConfigureAwait(false);
@@ -601,7 +498,6 @@ namespace TorchDiscordSync.DiscordHost.Services
                 _client.Disconnected -= OnBotDisconnected;
                 _client.MessageReceived -= OnMessageReceivedAsync;
                 _client.SlashCommandExecuted -= OnSlashCommandExecutedAsync;
-                _client.UserJoined -= OnUserJoinedAsync;
 
                 try
                 {
@@ -746,12 +642,6 @@ namespace TorchDiscordSync.DiscordHost.Services
                 if (message.Author.IsBot)
                     return;
 
-                if (message.Channel is IDMChannel)
-                {
-                    await HandleDirectMessageAsync(message).ConfigureAwait(false);
-                    return;
-                }
-
                 if (IsAdminCommandChannel(message.Channel.Id))
                 {
                     await HandleLegacyAdminChannelMessageAsync(message).ConfigureAwait(false);
@@ -781,47 +671,6 @@ namespace TorchDiscordSync.DiscordHost.Services
             catch (Exception ex)
             {
                 HostLogger.Error("OnMessageReceivedAsync failed: " + ex.Message);
-            }
-        }
-
-        private async Task HandleDirectMessageAsync(SocketMessage message)
-        {
-            if (string.IsNullOrWhiteSpace(message.Content))
-                return;
-
-            var normalized = message.Content.Trim();
-            var verifyPrefix = _config.BotPrefix + "verify";
-            var helpPrefix = _config.BotPrefix + "help";
-            if (!normalized.StartsWith(verifyPrefix, StringComparison.OrdinalIgnoreCase)
-                && !normalized.StartsWith(helpPrefix, StringComparison.OrdinalIgnoreCase)
-                && !normalized.StartsWith("verify", StringComparison.OrdinalIgnoreCase)
-                && !normalized.StartsWith("help", StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-            
-            await message.Author.SendMessageAsync(
-                "Text commands are no longer supported here. Use the `/verify` application command and enter your verification code.")
-                .ConfigureAwait(false);
-        }
-
-        private static async Task OnUserJoinedAsync(SocketGuildUser user)
-        {
-            try
-            {
-                var embed = new EmbedBuilder()
-                    .WithColor(Color.Gold)
-                    .WithTitle("Welcome")
-                    .WithDescription("Welcome to the Space Engineers community.")
-                    .AddField("Link Your Account", "Use `/tds verify @YourDiscordName` in-game")
-                    .AddField("Complete Verification", "Use `/verify` after the bot DMs your code")
-                    .Build();
-
-                await user.SendMessageAsync(embed: embed).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                HostLogger.Warn("OnUserJoinedAsync failed: " + ex.Message);
             }
         }
 
@@ -856,18 +705,6 @@ namespace TorchDiscordSync.DiscordHost.Services
             await ConnectionStateChanged.Invoke(GetConnectionState()).ConfigureAwait(false);
         }
 
-        private async Task SendVerificationPendingAsync(IUser author)
-        {
-            var embed = new EmbedBuilder()
-                .WithColor(Color.Blue)
-                .WithTitle("Verifying")
-                .WithDescription("Your verification code is being processed.")
-                .WithFooter("You will receive a confirmation shortly")
-                .Build();
-
-            await author.SendMessageAsync(embed: embed).ConfigureAwait(false);
-        }
-
         private async Task RegisterApplicationCommandsAsync()
         {
             if (_applicationCommandsRegistered || _client == null || _config == null)
@@ -883,14 +720,10 @@ namespace TorchDiscordSync.DiscordHost.Services
             var guildCommands = new ApplicationCommandProperties[]
             {
                 BuildTdsCommand().Build(),
-                BuildVerifyCommand(allowDm: false).Build(),
             };
             await guild.BulkOverwriteApplicationCommandAsync(guildCommands).ConfigureAwait(false);
 
-            var globalCommands = new ApplicationCommandProperties[]
-            {
-                BuildVerifyCommand(allowDm: true).Build(),
-            };
+            var globalCommands = Array.Empty<ApplicationCommandProperties>();
             await ((IDiscordClient)_client).BulkOverwriteGlobalApplicationCommand(globalCommands)
                 .ConfigureAwait(false);
 
@@ -905,20 +738,13 @@ namespace TorchDiscordSync.DiscordHost.Services
                 if (command?.User == null || command.User.IsBot)
                     return;
 
-                switch (command.CommandName)
+                if (command.CommandName == "tds")
                 {
-                    case "verify":
-                        await HandleVerifySlashCommandAsync(command).ConfigureAwait(false);
-                        break;
-
-                    case "tds":
-                        await HandleTdsSlashCommandAsync(command).ConfigureAwait(false);
-                        break;
-
-                    default:
-                        await command.RespondAsync("Unknown command.", ephemeral: true).ConfigureAwait(false);
-                        break;
+                    await HandleTdsSlashCommandAsync(command).ConfigureAwait(false);
+                    return;
                 }
+
+                await command.RespondAsync("Unknown command.", ephemeral: true).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -937,27 +763,6 @@ namespace TorchDiscordSync.DiscordHost.Services
                     // ignored
                 }
             }
-        }
-
-        private async Task HandleVerifySlashCommandAsync(SocketSlashCommand command)
-        {
-            var code = GetOptionValue(command.Data.Options, "code");
-            if (string.IsNullOrWhiteSpace(code))
-            {
-                await command.RespondAsync(
-                    "Use `/verify` and provide the verification code from the bot DM.",
-                    ephemeral: command.GuildId.HasValue).ConfigureAwait(false);
-                return;
-            }
-
-            await command.RespondAsync(
-                "Your verification code is being processed. You will receive a confirmation shortly.",
-                ephemeral: command.GuildId.HasValue).ConfigureAwait(false);
-
-            await PublishVerificationAttemptAsync(
-                code.Trim().ToUpperInvariant(),
-                command.User.Id,
-                command.User.Username).ConfigureAwait(false);
         }
 
         private async Task HandleTdsSlashCommandAsync(SocketSlashCommand command)
@@ -1010,27 +815,13 @@ namespace TorchDiscordSync.DiscordHost.Services
             await MessageReceived.Invoke(incoming).ConfigureAwait(false);
         }
 
-        private async Task PublishVerificationAttemptAsync(string code, ulong discordUserId, string username)
-        {
-            if (VerificationAttemptReceived == null)
-                return;
-
-            await VerificationAttemptReceived.Invoke(
-                new DiscordVerificationAttempt
-                {
-                    VerificationCode = code,
-                    DiscordUserId = discordUserId,
-                    DiscordUsername = username,
-                }).ConfigureAwait(false);
-        }
-
         private async Task HandleLegacyAdminChannelMessageAsync(SocketMessage message)
         {
             if (string.IsNullOrWhiteSpace(message.Content))
                 return;
 
             if (!message.Content.StartsWith(
-                    _config.BotPrefix + "tds",
+                    LegacyTextCommandPrefix + "tds",
                     StringComparison.OrdinalIgnoreCase))
                 return;
 
@@ -1046,32 +837,6 @@ namespace TorchDiscordSync.DiscordHost.Services
                    && channelId == _config.AdminBotChannelId;
         }
 
-        private static SlashCommandBuilder BuildVerifyCommand(bool allowDm)
-        {
-            var builder = new SlashCommandBuilder()
-                .WithName("verify")
-                .WithDescription("Complete Torch Discord Sync account verification")
-                .AddOption(
-                    "code",
-                    ApplicationCommandOptionType.String,
-                    "The verification code from the bot DM",
-                    isRequired: false);
-
-            if (allowDm)
-            {
-                builder.WithContextTypes(
-                    InteractionContextType.Guild,
-                    InteractionContextType.BotDm,
-                    InteractionContextType.PrivateChannel);
-            }
-            else
-            {
-                builder.WithContextTypes(InteractionContextType.Guild);
-            }
-
-            return builder;
-        }
-
         private static SlashCommandBuilder BuildTdsCommand()
         {
             var builder = new SlashCommandBuilder()
@@ -1084,20 +849,6 @@ namespace TorchDiscordSync.DiscordHost.Services
             builder.AddOption(BuildSubCommand("cleanup", "Clean up orphaned Discord roles and channels"));
             builder.AddOption(BuildSubCommand("reset", "Reset Discord faction roles and channels"));
             builder.AddOption(BuildSubCommand("reload", "Reload plugin configuration"));
-            builder.AddOption(
-                BuildSubCommand(
-                    "unverify",
-                    "Remove a verification",
-                    new SlashCommandOptionBuilder()
-                        .WithName("steamid")
-                        .WithDescription("SteamID to unverify")
-                        .WithType(ApplicationCommandOptionType.String)
-                        .WithRequired(true),
-                    new SlashCommandOptionBuilder()
-                        .WithName("reason")
-                        .WithDescription("Reason for the removal")
-                        .WithType(ApplicationCommandOptionType.String)
-                        .WithRequired(false)));
 
             builder.AddOption(
                 new SlashCommandOptionBuilder()
@@ -1117,23 +868,6 @@ namespace TorchDiscordSync.DiscordHost.Services
                                 .WithType(ApplicationCommandOptionType.String)
                                 .WithRequired(true)))
                     .AddOption(BuildSubCommand("undoall", "Undo sync for all factions")));
-
-            builder.AddOption(
-                new SlashCommandOptionBuilder()
-                    .WithName("verify")
-                    .WithDescription("Verification administration commands")
-                    .WithType(ApplicationCommandOptionType.SubCommandGroup)
-                    .AddOption(BuildSubCommand("list", "List verified users"))
-                    .AddOption(BuildSubCommand("pending", "List pending verifications"))
-                    .AddOption(
-                        BuildSubCommand(
-                            "delete",
-                            "Delete a verification record",
-                            new SlashCommandOptionBuilder()
-                                .WithName("steamid")
-                                .WithDescription("SteamID to delete")
-                                .WithType(ApplicationCommandOptionType.String)
-                                .WithRequired(true))));
 
             return builder;
         }
@@ -1198,19 +932,6 @@ namespace TorchDiscordSync.DiscordHost.Services
                         content = "!tds reload";
                         displayText = "/tds reload";
                         return true;
-                    case "unverify":
-                        var unverifySteamId = GetOptionValue(rootOption.Options, "steamid");
-                        if (string.IsNullOrWhiteSpace(unverifySteamId))
-                            return false;
-
-                        var reason = GetOptionValue(rootOption.Options, "reason");
-                        content = string.IsNullOrWhiteSpace(reason)
-                            ? "!tds unverify " + unverifySteamId
-                            : "!tds unverify " + unverifySteamId + " " + reason;
-                        displayText = string.IsNullOrWhiteSpace(reason)
-                            ? "/tds unverify steamid:" + unverifySteamId
-                            : "/tds unverify steamid:" + unverifySteamId + " reason:" + reason;
-                        return true;
                 }
 
                 return false;
@@ -1255,29 +976,6 @@ namespace TorchDiscordSync.DiscordHost.Services
                     }
 
                     return false;
-
-                case "verify":
-                    switch (subCommand.Name)
-                    {
-                        case "list":
-                            content = "!tds verify:list";
-                            displayText = "/tds verify list";
-                            return true;
-                        case "pending":
-                            content = "!tds verify:pending";
-                            displayText = "/tds verify pending";
-                            return true;
-                        case "delete":
-                            var steamId = GetOptionValue(subCommand.Options, "steamid");
-                            if (string.IsNullOrWhiteSpace(steamId))
-                                return false;
-
-                            content = "!tds verify:delete " + steamId;
-                            displayText = "/tds verify delete steamid:" + steamId;
-                            return true;
-                    }
-
-                    return false;
             }
 
             return false;
@@ -1293,43 +991,6 @@ namespace TorchDiscordSync.DiscordHost.Services
             var option = options.FirstOrDefault(o =>
                 string.Equals(o.Name, name, StringComparison.OrdinalIgnoreCase));
             return option?.Value?.ToString();
-        }
-
-        private SocketGuildUser FindUserByUsername(string searchTerm)
-        {
-            try
-            {
-                var guild = GetGuild();
-                if (guild == null || string.IsNullOrWhiteSpace(searchTerm))
-                    return null;
-
-                var search = searchTerm.ToLowerInvariant().Replace("@", string.Empty).Trim();
-                if (ulong.TryParse(search, out var userId))
-                    return guild.GetUser(userId);
-
-                foreach (var user in guild.Users)
-                {
-                    if (user.IsBot)
-                        continue;
-
-                    if (string.Equals(user.Username, search, StringComparison.OrdinalIgnoreCase))
-                        return user;
-
-                    if (!string.IsNullOrWhiteSpace(user.Nickname)
-                        && string.Equals(user.Nickname, search, StringComparison.OrdinalIgnoreCase))
-                        return user;
-                }
-
-                return guild.Users.FirstOrDefault(user =>
-                    !user.IsBot
-                    && !string.IsNullOrWhiteSpace(user.Username)
-                    && user.Username.IndexOf(search, StringComparison.OrdinalIgnoreCase) >= 0);
-            }
-            catch (Exception ex)
-            {
-                HostLogger.Warn("FindUserByUsername failed: " + ex.Message);
-                return null;
-            }
         }
 
         private static Embed BuildEmbed(DiscordEmbedModel model)
