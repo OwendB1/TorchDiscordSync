@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.IO.Pipes;
 using System.Reflection;
 using System.Threading;
@@ -22,7 +23,8 @@ namespace TorchDiscordSync.Plugin.Services
         private const string HostExecutableFileName = "TorchDiscordSync.DiscordHost.exe";
         private const string HostManagedDllFileName = "TorchDiscordSync.DiscordHost.dll";
         private const string HostAppHostFileName = "TorchDiscordSync.DiscordHost";
-        private const string PluginManifestGuid = "e1b1e28a-7b3c-4b8d-bfc3-5d9c1f8d9e6f";
+        private const string PluginArchiveFileName = "TorchDiscordSync (linux compatible).zip";
+        private const string PluginManifestGuid = "07ce2bbd-f606-418d-aff1-ea95bfc5795d";
 
         private readonly SemaphoreSlim _lifecycleLock = new SemaphoreSlim(1, 1);
         private readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
@@ -827,27 +829,43 @@ namespace TorchDiscordSync.Plugin.Services
 
             foreach (var hostBaseDirectory in hostBaseDirectories)
             {
-                var payloadDirectory = Path.Combine(hostBaseDirectory, "HostPayload");
                 try
                 {
-                    if (Directory.Exists(payloadDirectory))
+                    if (TryStageBundledHostArtifacts(
+                            hostBaseDirectory,
+                            out workingDirectory,
+                            out executablePath,
+                            out dllPath))
                     {
-                        var stagedDirectory = StageBundledHostArtifacts(payloadDirectory);
-                        if (TrySelectHostEntrypoint(
-                                stagedDirectory,
-                                out workingDirectory,
-                                out executablePath,
-                                out dllPath))
-                        {
-                            return true;
-                        }
+                        return true;
                     }
                 }
                 catch (Exception ex)
                 {
                     LoggerUtil.LogWarning(
-                        "[DISCORD_IPC] Failed to stage Discord host payload from "
-                        + payloadDirectory + ": " + ex.Message);
+                        "[DISCORD_IPC] Failed to stage Discord host artifacts from "
+                        + hostBaseDirectory + ": " + ex.Message);
+                }
+            }
+
+            foreach (var archivePath in GetCandidatePluginArchivePaths(hostBaseDirectories))
+            {
+                try
+                {
+                    if (TryStageBundledHostArchive(
+                            archivePath,
+                            out workingDirectory,
+                            out executablePath,
+                            out dllPath))
+                    {
+                        return true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LoggerUtil.LogWarning(
+                        "[DISCORD_IPC] Failed to extract Discord host from archive "
+                        + archivePath + ": " + ex.Message);
                 }
             }
 
@@ -931,14 +949,8 @@ namespace TorchDiscordSync.Plugin.Services
             if (string.IsNullOrWhiteSpace(pluginDirectory) || !Directory.Exists(pluginDirectory))
                 return false;
 
-            var payloadDirectory = Path.Combine(pluginDirectory, "HostPayload");
-            if (Directory.Exists(payloadDirectory)
-                && (File.Exists(Path.Combine(payloadDirectory, HostExecutableFileName))
-                    || File.Exists(Path.Combine(payloadDirectory, HostManagedDllFileName))
-                    || File.Exists(Path.Combine(payloadDirectory, HostAppHostFileName))))
-            {
+            if (DirectoryContainsHostEntrypoint(pluginDirectory))
                 return true;
-            }
 
             var manifestPath = Path.Combine(pluginDirectory, "manifest.xml");
             if (!File.Exists(manifestPath))
@@ -951,10 +963,8 @@ namespace TorchDiscordSync.Plugin.Services
 
                 var guidNode = document.SelectSingleNode("/PluginManifest/Guid");
                 return guidNode != null
-                       && string.Equals(
-                           guidNode.InnerText != null ? guidNode.InnerText.Trim() : string.Empty,
-                           PluginManifestGuid,
-                           StringComparison.OrdinalIgnoreCase);
+                       && IsKnownPluginManifestGuid(
+                           guidNode.InnerText != null ? guidNode.InnerText.Trim() : string.Empty);
             }
             catch
             {
@@ -973,7 +983,193 @@ namespace TorchDiscordSync.Plugin.Services
             return false;
         }
 
-        private static string StageBundledHostArtifacts(string payloadDirectory)
+        private static bool IsKnownPluginManifestGuid(string manifestGuid)
+        {
+            return string.Equals(manifestGuid, PluginManifestGuid, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static List<string> GetCandidatePluginArchivePaths(IEnumerable<string> hostBaseDirectories)
+        {
+            var archivePaths = new List<string>();
+
+            foreach (var hostBaseDirectory in hostBaseDirectories)
+            {
+                AddPluginArchiveCandidates(archivePaths, hostBaseDirectory);
+
+                try
+                {
+                    var parentDirectory = Path.GetDirectoryName(hostBaseDirectory);
+                    AddPluginArchiveCandidates(archivePaths, parentDirectory);
+                }
+                catch
+                {
+                }
+            }
+
+            try
+            {
+                var torchBaseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+                if (!string.IsNullOrWhiteSpace(torchBaseDirectory))
+                    AddPluginArchiveCandidates(archivePaths, Path.Combine(torchBaseDirectory, "Plugins"));
+            }
+            catch
+            {
+            }
+
+            return archivePaths;
+        }
+
+        private static void AddPluginArchiveCandidates(List<string> archivePaths, string directory)
+        {
+            if (archivePaths == null || string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+                return;
+
+            var archivePath = Path.Combine(directory, PluginArchiveFileName);
+            if (File.Exists(archivePath) && !ContainsPath(archivePaths, archivePath))
+                archivePaths.Add(archivePath);
+        }
+
+        private static bool TryStageBundledHostArtifacts(
+            string hostBaseDirectory,
+            out string workingDirectory,
+            out string executablePath,
+            out string dllPath)
+        {
+            workingDirectory = null;
+            executablePath = null;
+            dllPath = null;
+
+            if (string.IsNullOrWhiteSpace(hostBaseDirectory) || !Directory.Exists(hostBaseDirectory))
+                return false;
+
+            if (DirectoryContainsHostEntrypoint(hostBaseDirectory))
+            {
+                var stagedDirectory = StageBundledHostArtifacts(
+                    hostBaseDirectory,
+                    GetRootHostArtifactFiles(hostBaseDirectory));
+                if (TrySelectHostEntrypoint(
+                        stagedDirectory,
+                        out workingDirectory,
+                        out executablePath,
+                        out dllPath))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryStageBundledHostArchive(
+            string archivePath,
+            out string workingDirectory,
+            out string executablePath,
+            out string dllPath)
+        {
+            workingDirectory = null;
+            executablePath = null;
+            dllPath = null;
+
+            if (string.IsNullOrWhiteSpace(archivePath) || !File.Exists(archivePath))
+                return false;
+
+            bool foundHostEntrypoint;
+            var stagedDirectory = StageBundledHostArtifactsFromArchive(
+                archivePath,
+                out foundHostEntrypoint);
+
+            return foundHostEntrypoint
+                   && TrySelectHostEntrypoint(
+                       stagedDirectory,
+                       out workingDirectory,
+                       out executablePath,
+                       out dllPath);
+        }
+
+        private static bool DirectoryContainsHostEntrypoint(string directory)
+        {
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+                return false;
+
+            return File.Exists(Path.Combine(directory, HostExecutableFileName))
+                   || File.Exists(Path.Combine(directory, HostManagedDllFileName))
+                   || File.Exists(Path.Combine(directory, HostAppHostFileName))
+                   || File.Exists(Path.Combine(directory, HostExecutableFileName + ".payload"))
+                   || File.Exists(Path.Combine(directory, HostManagedDllFileName + ".payload"))
+                   || File.Exists(Path.Combine(directory, HostAppHostFileName + ".payload"));
+        }
+
+        private static List<string> GetRootHostArtifactFiles(string directory)
+        {
+            var hostArtifactFiles = new List<string>();
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+                return hostArtifactFiles;
+
+            foreach (var fileName in GetRootHostArtifactFileNames())
+            {
+                var path = Path.Combine(directory, fileName);
+                if (File.Exists(path))
+                    hostArtifactFiles.Add(path);
+            }
+
+            return hostArtifactFiles;
+        }
+
+        private static string[] GetRootHostArtifactFileNames()
+        {
+            return new[]
+            {
+                HostExecutableFileName,
+                HostManagedDllFileName,
+                HostAppHostFileName,
+                HostExecutableFileName + ".payload",
+                HostManagedDllFileName + ".payload",
+                HostAppHostFileName + ".payload",
+                Path.ChangeExtension(HostManagedDllFileName, ".deps.json"),
+                Path.ChangeExtension(HostManagedDllFileName, ".runtimeconfig.json"),
+            };
+        }
+
+        private static bool IsRootHostArtifactFile(string relativePath)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath))
+                return false;
+
+            var fileName = Path.GetFileName(relativePath);
+            foreach (var hostArtifactFileName in GetRootHostArtifactFileNames())
+            {
+                if (string.Equals(fileName, hostArtifactFileName, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static string GetHostArtifactTargetRelativePath(string archiveEntryName)
+        {
+            if (string.IsNullOrWhiteSpace(archiveEntryName))
+                return null;
+
+            var normalizedEntryName = archiveEntryName.Replace('\\', '/');
+            if (normalizedEntryName.EndsWith("/", StringComparison.Ordinal)
+                || normalizedEntryName.IndexOf('/') >= 0)
+            {
+                return null;
+            }
+
+            var targetRelativePath = normalizedEntryName.EndsWith(".payload", StringComparison.OrdinalIgnoreCase)
+                ? normalizedEntryName.Substring(0, normalizedEntryName.Length - ".payload".Length)
+                : normalizedEntryName;
+
+            return IsRootHostArtifactFile(normalizedEntryName)
+                   || IsRootHostArtifactFile(targetRelativePath)
+                ? targetRelativePath
+                : null;
+        }
+
+        private static string StageBundledHostArtifacts(
+            string payloadDirectory,
+            IEnumerable<string> sourcePaths)
         {
             // Torch loads plugin assemblies from the plugin install folder. Stage the
             // external .NET host into the writable instance data area before launching it.
@@ -983,10 +1179,7 @@ namespace TorchDiscordSync.Plugin.Services
                 "DiscordHost");
             Directory.CreateDirectory(stagedDirectory);
 
-            foreach (var sourcePath in Directory.GetFiles(
-                         payloadDirectory,
-                         "*",
-                         SearchOption.AllDirectories))
+            foreach (var sourcePath in sourcePaths)
             {
                 var relativePath = sourcePath.Substring(payloadDirectory.Length)
                     .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -1007,6 +1200,56 @@ namespace TorchDiscordSync.Plugin.Services
             }
 
             return stagedDirectory;
+        }
+
+        private static string StageBundledHostArtifactsFromArchive(
+            string archivePath,
+            out bool foundHostEntrypoint)
+        {
+            foundHostEntrypoint = false;
+            var stagedDirectory = GetStagedHostDirectory();
+            Directory.CreateDirectory(stagedDirectory);
+
+            using (var stream = File.OpenRead(archivePath))
+            using (var archive = new ZipArchive(stream, ZipArchiveMode.Read))
+            {
+                foreach (var entry in archive.Entries)
+                {
+                    var targetRelativePath = GetHostArtifactTargetRelativePath(entry.FullName);
+                    if (string.IsNullOrWhiteSpace(targetRelativePath))
+                        continue;
+
+                    if (IsHostEntrypointFile(targetRelativePath))
+                        foundHostEntrypoint = true;
+
+                    var destinationPath = Path.Combine(stagedDirectory, targetRelativePath);
+                    var destinationDirectory = Path.GetDirectoryName(destinationPath);
+
+                    if (!string.IsNullOrWhiteSpace(destinationDirectory))
+                        Directory.CreateDirectory(destinationDirectory);
+
+                    if (!ShouldCopyArchiveEntry(entry, destinationPath, targetRelativePath))
+                        continue;
+
+                    using (var source = entry.Open())
+                    using (var destination = File.Create(destinationPath))
+                    {
+                        source.CopyTo(destination);
+                    }
+
+                    File.SetLastWriteTimeUtc(destinationPath, entry.LastWriteTime.UtcDateTime);
+                }
+            }
+
+            return stagedDirectory;
+        }
+
+        private static string GetStagedHostDirectory()
+        {
+            return Path.Combine(
+                TorchDiscordSync.Plugin.Config.MainConfig.GetPluginDirectory(),
+                "runtime",
+                "DiscordHost");
         }
 
         private static bool TrySelectHostEntrypoint(
@@ -1066,6 +1309,22 @@ namespace TorchDiscordSync.Plugin.Services
 
             return sourceInfo.Length != destinationInfo.Length
                    || sourceInfo.LastWriteTimeUtc != destinationInfo.LastWriteTimeUtc;
+        }
+
+        private static bool ShouldCopyArchiveEntry(
+            ZipArchiveEntry entry,
+            string destinationPath,
+            string targetRelativePath)
+        {
+            if (IsHostEntrypointFile(targetRelativePath))
+                return true;
+
+            if (!File.Exists(destinationPath))
+                return true;
+
+            var destinationInfo = new FileInfo(destinationPath);
+            return entry.Length != destinationInfo.Length
+                   || entry.LastWriteTime.UtcDateTime != destinationInfo.LastWriteTimeUtc;
         }
 
         private static bool IsHostEntrypointFile(string relativePath)

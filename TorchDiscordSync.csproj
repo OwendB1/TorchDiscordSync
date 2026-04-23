@@ -24,6 +24,18 @@
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <DiscordHostRuntimeIdentifier>win-x64</DiscordHostRuntimeIdentifier>
+    <DiscordHostTargetFramework>net8.0</DiscordHostTargetFramework>
+    <DiscordHostExecutableName>TorchDiscordSync.DiscordHost.exe</DiscordHostExecutableName>
+    <DiscordHostManagedDllName>TorchDiscordSync.DiscordHost.dll</DiscordHostManagedDllName>
+    <DiscordHostAppHostName>TorchDiscordSync.DiscordHost</DiscordHostAppHostName>
+    <PluginPackageName>TorchDiscordSync (linux compatible)</PluginPackageName>
+    <PluginPackageDirectory>$(MSBuildProjectDirectory)\bin\$(Configuration)\</PluginPackageDirectory>
+    <PluginPackagePath>$(PluginPackageDirectory)$(PluginPackageName).zip</PluginPackagePath>
+    <PluginPackageStagingDirectory>$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\$(PluginPackageName)\package\</PluginPackageStagingDirectory>
+  </PropertyGroup>
+
   <ItemGroup>
     <None Remove="Dependencies\**" />
     <Content Remove="Dependencies\**" />
@@ -33,6 +45,9 @@
     <Content Remove="DiscordHost\**" />
     <Compile Remove="DiscordHost\**" />
     <EmbeddedResource Remove="DiscordHost\**" />
+    <None Update="manifest.xml">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
   
   <!-- NuGet Package References -->
@@ -96,21 +111,21 @@
 
   <Target Name="BuildDiscordHost" AfterTargets="Build">
     <RemoveDir Directories="$(OutputPath)DiscordHost" />
-    <RemoveDir Directories="$(OutputPath)HostPayload" />
+    <Delete Files="$(OutputPath)$(DiscordHostExecutableName);$(OutputPath)$(DiscordHostManagedDllName);$(OutputPath)$(DiscordHostAppHostName)" />
 
     <MSBuild
       Projects="$(MSBuildProjectDirectory)\DiscordHost\TorchDiscordSync.DiscordHost.csproj"
       Targets="Publish"
-      Properties="Configuration=$(Configuration)" />
+      Properties="Configuration=$(Configuration);RuntimeIdentifier=$(DiscordHostRuntimeIdentifier)" />
 
     <ItemGroup>
-      <DiscordHostPublishArtifacts Include="$(MSBuildProjectDirectory)\DiscordHost\bin\$(Configuration)\net8.0\win-x64\publish\**\*"
-                                   Exclude="$(MSBuildProjectDirectory)\DiscordHost\bin\$(Configuration)\net8.0\win-x64\publish\**\*.pdb;$(MSBuildProjectDirectory)\DiscordHost\bin\$(Configuration)\net8.0\win-x64\publish\**\*.xml" />
+      <DiscordHostPublishArtifacts Include="$(MSBuildProjectDirectory)\DiscordHost\bin\$(Configuration)\$(DiscordHostTargetFramework)\$(DiscordHostRuntimeIdentifier)\publish\**\*"
+                                   Exclude="$(MSBuildProjectDirectory)\DiscordHost\bin\$(Configuration)\$(DiscordHostTargetFramework)\$(DiscordHostRuntimeIdentifier)\publish\**\*.pdb;$(MSBuildProjectDirectory)\DiscordHost\bin\$(Configuration)\$(DiscordHostTargetFramework)\$(DiscordHostRuntimeIdentifier)\publish\**\*.xml" />
     </ItemGroup>
 
     <Copy
       SourceFiles="@(DiscordHostPublishArtifacts)"
-      DestinationFiles="@(DiscordHostPublishArtifacts->'$(OutputPath)HostPayload\%(RecursiveDir)%(Filename)%(Extension)')"
+      DestinationFolder="$(OutputPath)"
       SkipUnchangedFiles="true" />
 
     <Delete Files="$(OutputPath)System.Data.SQLite.dll" />
@@ -119,6 +134,31 @@
     <Delete Files="$(OutputPath)x86\SQLite.Interop.dll" />
     <RemoveDir Directories="$(OutputPath)x64" />
     <RemoveDir Directories="$(OutputPath)x86" />
+  </Target>
+
+  <Target Name="PackagePlugin" AfterTargets="BuildDiscordHost">
+    <RemoveDir Directories="$(PluginPackageStagingDirectory)" />
+    <MakeDir Directories="$(PluginPackageStagingDirectory)" />
+    <MakeDir Directories="$(PluginPackageDirectory)" />
+
+    <ItemGroup>
+      <ExistingPluginPackages Include="$(PluginPackageDirectory)*.zip" />
+      <PluginPackageFiles Include="$(OutputPath)*"
+                          Exclude="$(OutputPath)*.pdb;$(OutputPath)$(PluginPackageName).zip" />
+    </ItemGroup>
+
+    <Delete Files="@(ExistingPluginPackages)" />
+
+    <Copy
+      SourceFiles="@(PluginPackageFiles)"
+      DestinationFiles="@(PluginPackageFiles->'$(PluginPackageStagingDirectory)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="false" />
+
+    <Delete Files="$(PluginPackagePath)" />
+    <ZipDirectory
+      SourceDirectory="$(PluginPackageStagingDirectory)"
+      DestinationFile="$(PluginPackagePath)"
+      Overwrite="true" />
   </Target>
 
 </Project>
