@@ -49,6 +49,8 @@ namespace TorchDiscordSync.Plugin.Services
         private object _lockObject = new object();
         private const int CHAT_EVENT_DEDUP_SECONDS = 15;
 
+        public event Action OnlinePlayersChanged;
+
         public PlayerTrackingService(
             EventLoggingService eventLog,
             ITorchBase torch,
@@ -199,12 +201,14 @@ namespace TorchDiscordSync.Plugin.Services
             MyAPIGateway.Players.GetPlayers(currentPlayers);
 
             var currentSteamIds = new HashSet<ulong>();
+            bool onlinePlayersChanged = false;
             foreach (var player in currentPlayers)
             {
                 currentSteamIds.Add(player.SteamUserId);
 
                 if (!_knownPlayers.Contains(player.SteamUserId))
                 {
+                    onlinePlayersChanged = true;
                     _knownPlayers.Add(player.SteamUserId);
                     _playerNames[player.SteamUserId] = player.DisplayName;
                     _deathEventCounters[player.SteamUserId] = 0;
@@ -233,6 +237,7 @@ namespace TorchDiscordSync.Plugin.Services
 
             foreach (var steamId in disconnected)
             {
+                onlinePlayersChanged = true;
                 _knownPlayers.Remove(steamId);
 
                 lock (_lockObject)
@@ -259,6 +264,9 @@ namespace TorchDiscordSync.Plugin.Services
                     _ = _eventLog.LogPlayerLeaveAsync(playerName, steamId);
                 }
             }
+
+            if (onlinePlayersChanged)
+                NotifyOnlinePlayersChanged();
         }
 
         /// <summary>
@@ -426,6 +434,8 @@ namespace TorchDiscordSync.Plugin.Services
             LoggerUtil.LogInfo($"[TRACKING] Chat-driven join detected: {playerName} ({steamId})");
             if (_eventLog != null)
                 _ = _eventLog.LogPlayerJoinAsync(playerName, steamId, false);
+
+            NotifyOnlinePlayersChanged();
         }
 
         private void HandleChatDrivenLeave(string playerName)
@@ -437,6 +447,8 @@ namespace TorchDiscordSync.Plugin.Services
             LoggerUtil.LogInfo($"[TRACKING] Chat-driven leave detected: {playerName} ({steamId})");
             if (_eventLog != null)
                 _ = _eventLog.LogPlayerLeaveAsync(playerName, steamId, false);
+
+            NotifyOnlinePlayersChanged();
         }
 
         private bool TryExtractPlayerJoin(string message, out string playerName)
@@ -646,6 +658,18 @@ namespace TorchDiscordSync.Plugin.Services
 
             if (player.Character != null)
                 HookCharacterDeath(player.Character, player.SteamUserId, player.DisplayName);
+        }
+
+        private void NotifyOnlinePlayersChanged()
+        {
+            try
+            {
+                OnlinePlayersChanged?.Invoke();
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogDebug("[TRACKING] OnlinePlayersChanged handler failed: " + ex.Message);
+            }
         }
 
         public void Dispose()

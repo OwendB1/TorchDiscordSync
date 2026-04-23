@@ -20,6 +20,8 @@ namespace TorchDiscordSync.DiscordHost.Services
         private bool _isReady;
         private bool _applicationCommandsRegistered;
         private bool _suppressReconnect;
+        private bool _statusSetOnline;
+        private string _lastPresenceText;
         private int _isReconnecting;
 
         public event Func<DiscordIncomingMessage, Task> MessageReceived;
@@ -520,11 +522,20 @@ namespace TorchDiscordSync.DiscordHost.Services
                 if (!EnsureReady() || request == null || string.IsNullOrWhiteSpace(request.StatusText))
                     return false;
 
-                await _client.SetStatusAsync(UserStatus.Online).ConfigureAwait(false);
+                if (string.Equals(request.StatusText, _lastPresenceText, StringComparison.Ordinal))
+                    return true;
+
+                if (!_statusSetOnline)
+                {
+                    await _client.SetStatusAsync(UserStatus.Online).ConfigureAwait(false);
+                    _statusSetOnline = true;
+                }
+
                 await _client.SetGameAsync(
                     request.StatusText,
                     null,
                     ActivityType.Watching).ConfigureAwait(false);
+                _lastPresenceText = request.StatusText;
                 return true;
             }
             catch (Exception ex)
@@ -577,6 +588,8 @@ namespace TorchDiscordSync.DiscordHost.Services
             {
                 _isConnected = false;
                 _isReady = false;
+                _statusSetOnline = false;
+                _lastPresenceText = null;
                 await PublishStateAsync().ConfigureAwait(false);
                 return;
             }
@@ -615,6 +628,8 @@ namespace TorchDiscordSync.DiscordHost.Services
                 _isConnected = false;
                 _isReady = false;
                 _applicationCommandsRegistered = false;
+                _statusSetOnline = false;
+                _lastPresenceText = null;
                 await PublishStateAsync().ConfigureAwait(false);
             }
         }
@@ -641,10 +656,12 @@ namespace TorchDiscordSync.DiscordHost.Services
             try
             {
                 await _client.SetStatusAsync(UserStatus.Online).ConfigureAwait(false);
+                _statusSetOnline = true;
                 await _client.SetGameAsync(
                     "/tds help",
                     null,
                     ActivityType.Listening).ConfigureAwait(false);
+                _lastPresenceText = "/tds help";
             }
             catch (Exception ex)
             {
@@ -676,6 +693,8 @@ namespace TorchDiscordSync.DiscordHost.Services
         {
             _isConnected = false;
             _isReady = false;
+            _statusSetOnline = false;
+            _lastPresenceText = null;
             _ = PublishStateAsync();
 
             if (_suppressReconnect)

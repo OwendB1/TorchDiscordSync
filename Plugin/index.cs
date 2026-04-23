@@ -146,6 +146,7 @@ namespace TorchDiscordSync
 
                 _playerTracking = new PlayerTrackingService(
                     _eventLog, _torch, _deathLog, _config, _deathMessageHandler);
+                _playerTracking.OnlinePlayersChanged += OnOnlinePlayersChanged;
 
                 // ---- faction sync ----
                 _factionSync = new FactionSyncService(_db, _discordWrapper, _config);
@@ -324,6 +325,8 @@ namespace TorchDiscordSync
             _deathMessageHandler?.Cleanup();
 
             // Clean up player tracking
+            if (_playerTracking != null)
+                _playerTracking.OnlinePlayersChanged -= OnOnlinePlayersChanged;
             _playerTracking?.Dispose();
 
             // Stop and dispose sync timer
@@ -439,6 +442,11 @@ namespace TorchDiscordSync
             }
 
             return true;
+        }
+
+        private void OnOnlinePlayersChanged()
+        {
+            _discordPresenceService?.RequestUpdate();
         }
 
         // ============================================================

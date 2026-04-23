@@ -20,7 +20,9 @@ namespace TorchDiscordSync.Plugin.Services
         private readonly System.Timers.Timer _presenceTimer;
 
         private int _updateInProgress;
+        private int _pendingUpdate;
         private bool _isDisposed;
+        private bool _isStarted;
         private bool _lastReadyState;
         private string _lastPresenceText;
         private DateTime _lastFailureLogTime = DateTime.MinValue;
@@ -41,6 +43,7 @@ namespace TorchDiscordSync.Plugin.Services
             if (_isDisposed || _presenceTimer.Enabled)
                 return;
 
+            _isStarted = true;
             _presenceTimer.Start();
             LoggerUtil.LogInfo(
                 $"[PRESENCE] Discord presence updates started (interval: {GetIntervalSeconds()}s)"
@@ -51,6 +54,9 @@ namespace TorchDiscordSync.Plugin.Services
 
         public void Stop(bool updateOfflinePresence = true)
         {
+            _isStarted = false;
+            Interlocked.Exchange(ref _pendingUpdate, 0);
+
             if (_presenceTimer.Enabled)
                 _presenceTimer.Stop();
 
@@ -67,6 +73,11 @@ namespace TorchDiscordSync.Plugin.Services
             {
                 LoggerUtil.LogDebug("[PRESENCE] Offline presence update failed: " + ex.Message);
             }
+        }
+
+        public void RequestUpdate()
+        {
+            QueuePresenceUpdate();
         }
 
         public void Dispose()
@@ -86,18 +97,37 @@ namespace TorchDiscordSync.Plugin.Services
 
         private void QueuePresenceUpdate()
         {
-            if (_isDisposed || Interlocked.Exchange(ref _updateInProgress, 1) == 1)
+            if (_isDisposed || !_isStarted)
+                return;
+
+            Interlocked.Exchange(ref _pendingUpdate, 1);
+
+            if (Interlocked.CompareExchange(ref _updateInProgress, 1, 0) == 1)
                 return;
 
             Task.Run(async delegate
             {
                 try
                 {
-                    await UpdatePresenceAsync(BuildPresenceText(), false).ConfigureAwait(false);
+                    while (
+                        !_isDisposed
+                        && _isStarted
+                        && Interlocked.Exchange(ref _pendingUpdate, 0) == 1)
+                    {
+                        await UpdatePresenceAsync(BuildPresenceText(), false).ConfigureAwait(false);
+                    }
                 }
                 finally
                 {
                     Interlocked.Exchange(ref _updateInProgress, 0);
+
+                    if (
+                        !_isDisposed
+                        && _isStarted
+                        && Interlocked.CompareExchange(ref _pendingUpdate, 0, 0) == 1)
+                    {
+                        QueuePresenceUpdate();
+                    }
                 }
             });
         }
