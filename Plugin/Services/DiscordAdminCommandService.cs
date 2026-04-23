@@ -1,103 +1,70 @@
-// Plugin/Services/DiscordAdminCommandService.cs
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using Discord;
-using Discord.WebSocket;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Core;
-using mamba.TorchDiscordSync.Plugin.Services;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Core;
+using TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Shared.Ipc;
 
-namespace mamba.TorchDiscordSync.Plugin.Services
+namespace TorchDiscordSync.Plugin.Services
 {
     /// <summary>
-    /// Listens to the private AdminBotChannel on Discord and executes
-    /// TDS admin commands (!tds ...) posted there.
-    ///
-    /// Flow per message:
-    ///   1. Validate: channel == AdminBotChannelId, author not bot, starts with "!tds"
-    ///   2. Post "⚙️ Executing..." acknowledgement immediately
-    ///   3. Run command (async where needed)
-    ///   4. Post result embed (success / error / info)
-    ///
-    /// All commands that exist as /tds admin:* in-game are available here.
+    /// Handles Discord admin commands received from the external Discord host.
     /// </summary>
     public class DiscordAdminCommandService
     {
-        private readonly DiscordBotService   _bot;
-        private readonly DatabaseService     _db;
-        private readonly FactionSyncService  _factionSync;
-        private readonly SyncOrchestrator    _orchestrator;
+        private readonly DiscordService _discord;
+        private readonly DatabaseService _db;
+        private readonly FactionSyncService _factionSync;
+        private readonly SyncOrchestrator _orchestrator;
         private readonly EventLoggingService _eventLog;
-        private readonly MainConfig          _config;
-
-        // Sentinel SteamID used when a command is issued from Discord (no real player)
-        private const long DISCORD_ADMIN_STEAM_ID = 0L;
-        private const string DISCORD_ADMIN_NAME   = "DiscordAdmin";
+        private readonly MainConfig _config;
 
         public DiscordAdminCommandService(
-            DiscordBotService   bot,
-            DatabaseService     db,
-            FactionSyncService  factionSync,
-            SyncOrchestrator    orchestrator,
+            DiscordService discord,
+            DatabaseService db,
+            FactionSyncService factionSync,
+            SyncOrchestrator orchestrator,
             EventLoggingService eventLog,
-            MainConfig          config)
+            MainConfig config)
         {
-            _bot         = bot;
-            _db          = db;
+            _discord = discord;
+            _db = db;
             _factionSync = factionSync;
             _orchestrator = orchestrator;
-            _eventLog    = eventLog;
-            _config      = config;
+            _eventLog = eventLog;
+            _config = config;
         }
 
-        // ================================================================
-        // ENTRY POINT  – hooked to DiscordBotService.OnMessageReceivedEvent
-        // ================================================================
-
-        /// <summary>
-        /// Called for every Discord message. Filters to AdminBotChannelId only.
-        /// </summary>
-        public async Task HandleMessageAsync(SocketMessage msg)
+        public async Task HandleMessageAsync(DiscordIncomingMessage msg)
         {
             try
             {
-                // Only process messages in the configured admin bot channel
                 ulong adminChannelId = _config?.Discord?.AdminBotChannelId ?? 0;
-                if (adminChannelId == 0 || msg.Channel.Id != adminChannelId)
+                if (adminChannelId == 0 || msg == null || msg.ChannelId != adminChannelId)
                     return;
 
-                // Ignore bot messages (prevents feedback loops)
-                if (msg.Author.IsBot)
+                if (msg.AuthorIsBot)
                     return;
 
-                string content = msg.Content?.Trim() ?? "";
-
-                // Accept: "!tds <cmd>" or just "!tds"
+                string content = msg.Content != null ? msg.Content.Trim() : string.Empty;
                 if (!content.StartsWith("!tds", StringComparison.OrdinalIgnoreCase))
                     return;
 
-                string authorTag = msg.Author.Username + "#" + msg.Author.Discriminator;
-                if (msg.Author.Discriminator == "0")
-                    authorTag = msg.Author.Username; // new Discord username format
+                string authorTag = msg.AuthorUsername;
+                if (!string.IsNullOrWhiteSpace(msg.AuthorDiscriminator)
+                    && msg.AuthorDiscriminator != "0")
+                {
+                    authorTag += "#" + msg.AuthorDiscriminator;
+                }
 
-                LoggerUtil.LogInfo(
-                    $"[ADMIN_BOT] Command from {authorTag}: {content}");
+                LoggerUtil.LogInfo($"[ADMIN_BOT] Command from {authorTag}: {content}");
 
-                // Extract sub-command (everything after "!tds")
-                string subRaw = content.Length > 4
-                    ? content.Substring(4).Trim()
-                    : "";
+                string subRaw = content.Length > 4 ? content.Substring(4).Trim() : string.Empty;
                 string normalizedSubRaw = NormalizeDiscordAdminCommand(subRaw);
 
-                // ── Acknowledge immediately ──────────────────────────────
-                await ReplyAckAsync(msg, normalizedSubRaw);
-
-                // ── Parse and execute ─────────────────────────────────────
-                await ExecuteAsync(msg, normalizedSubRaw, authorTag);
+                await ExecuteAsync(msg, normalizedSubRaw, authorTag).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -108,7 +75,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
         private static string NormalizeDiscordAdminCommand(string subRaw)
         {
             if (string.IsNullOrWhiteSpace(subRaw))
-                return "";
+                return string.Empty;
 
             if (subRaw.StartsWith("admin:", StringComparison.OrdinalIgnoreCase))
                 return subRaw.Substring("admin:".Length);
@@ -116,33 +83,11 @@ namespace mamba.TorchDiscordSync.Plugin.Services
             return subRaw;
         }
 
-        // ================================================================
-        // ACKNOWLEDGEMENT
-        // ================================================================
-
-        private async Task ReplyAckAsync(SocketMessage msg, string subRaw)
+        private async Task ExecuteAsync(
+            DiscordIncomingMessage msg,
+            string subRaw,
+            string authorTag)
         {
-            try
-            {
-                string display = string.IsNullOrEmpty(subRaw) ? "help" : subRaw;
-                var embed = new EmbedBuilder()
-                    .WithColor(Color.Orange)
-                    .WithDescription($"⚙️ Executing `!tds {display}`…")
-                    .WithCurrentTimestamp()
-                    .Build();
-
-                await ((IMessageChannel)msg.Channel).SendMessageAsync(embed: embed);
-            }
-            catch { /* non-fatal */ }
-        }
-
-        // ================================================================
-        // COMMAND DISPATCH
-        // ================================================================
-
-        private async Task ExecuteAsync(SocketMessage msg, string subRaw, string authorTag)
-        {
-            // Tokenize
             var parts = subRaw.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             string sub = parts.Length > 0 ? parts[0].ToLower() : "help";
 
@@ -150,128 +95,146 @@ namespace mamba.TorchDiscordSync.Plugin.Services
             {
                 switch (sub)
                 {
-                    // ── help ────────────────────────────────────────────
                     case "":
                     case "help":
-                        await ReplyHelpAsync(msg);
+                        await ReplyHelpAsync(msg).ConfigureAwait(false);
                         break;
 
-                    // ── sync:check ──────────────────────────────────────
                     case "sync:check":
                         {
                             string result = _factionSync.AdminSyncCheck();
-                            await ReplySuccessAsync(msg, "sync:check", result);
+                            await ReplySuccessAsync(msg, "sync:check", result).ConfigureAwait(false);
                             LoggerUtil.LogInfo($"[ADMIN_BOT] {authorTag} ran sync:check");
                             break;
                         }
 
-                    // ── sync:status ─────────────────────────────────────
                     case "sync:status":
                         {
                             string result = _factionSync.AdminSyncStatus();
-                            await ReplyInfoAsync(msg, "sync:status", result);
+                            await ReplyInfoAsync(msg, "sync:status", result).ConfigureAwait(false);
                             LoggerUtil.LogInfo($"[ADMIN_BOT] {authorTag} ran sync:status");
                             break;
                         }
 
-                    // ── sync:undo <TAG> ──────────────────────────────────
                     case "sync:undo":
                         {
                             if (parts.Length < 2)
                             {
-                                await ReplyErrorAsync(msg, "sync:undo", "Usage: `!tds sync:undo <faction_tag>`");
+                                await ReplyErrorAsync(
+                                    msg,
+                                    "sync:undo",
+                                    "Usage: `/tds sync undo faction-tag:<TAG>`").ConfigureAwait(false);
                                 return;
                             }
+
                             string tag = parts[1].ToUpper();
-                            LoggerUtil.LogWarning($"[ADMIN_BOT] {authorTag} running sync:undo for {tag}");
-                            string result = await _factionSync.AdminSyncUndo(tag);
-                            await ReplySuccessAsync(msg, $"sync:undo {tag}", result);
+                            LoggerUtil.LogWarning(
+                                $"[ADMIN_BOT] {authorTag} running sync:undo for {tag}");
+                            string result = await _factionSync.AdminSyncUndo(tag).ConfigureAwait(false);
+                            await ReplySuccessAsync(msg, "sync:undo " + tag, result).ConfigureAwait(false);
                             break;
                         }
 
-                    // ── sync:undo_all ────────────────────────────────────
                     case "sync:undo_all":
                         {
-                            LoggerUtil.LogWarning($"[ADMIN_BOT] {authorTag} running sync:undo_all");
-                            string result = await _factionSync.AdminSyncUndoAll();
-                            await ReplySuccessAsync(msg, "sync:undo_all", result);
+                            LoggerUtil.LogWarning(
+                                $"[ADMIN_BOT] {authorTag} running sync:undo_all");
+                            string result = await _factionSync.AdminSyncUndoAll().ConfigureAwait(false);
+                            await ReplySuccessAsync(msg, "sync:undo_all", result).ConfigureAwait(false);
                             break;
                         }
 
-                    // ── sync:cleanup ─────────────────────────────────────
                     case "sync:cleanup":
                         {
-                            LoggerUtil.LogInfo($"[ADMIN_BOT] {authorTag} running sync:cleanup");
-                            string result = await _factionSync.AdminSyncCleanup();
-                            await ReplySuccessAsync(msg, "sync:cleanup", result);
+                            LoggerUtil.LogInfo(
+                                $"[ADMIN_BOT] {authorTag} running sync:cleanup");
+                            string result = await _factionSync.AdminSyncCleanup().ConfigureAwait(false);
+                            await ReplySuccessAsync(msg, "sync:cleanup", result).ConfigureAwait(false);
                             break;
                         }
 
-                    // ── sync  (full faction sync) ──────────────────────
                     case "sync":
                         {
-                            LoggerUtil.LogInfo($"[ADMIN_BOT] {authorTag} running full faction sync");
-                            await _orchestrator.SyncFactionsAsync();
-                            await ReplySuccessAsync(msg, "sync", "Full faction synchronization complete.");
+                            LoggerUtil.LogInfo(
+                                $"[ADMIN_BOT] {authorTag} running full faction sync");
+                            await _orchestrator.SyncFactionsAsync().ConfigureAwait(false);
+                            await ReplySuccessAsync(
+                                msg,
+                                "sync",
+                                "Full faction synchronization complete.").ConfigureAwait(false);
                             break;
                         }
 
-                    // ── reset  (DESTRUCTIVE) ───────────────────────────
                     case "reset":
                         {
-                            LoggerUtil.LogWarning($"[ADMIN_BOT] {authorTag} running RESET (destructive)");
-                            await _factionSync.ResetDiscordAsync();
-                            await ReplySuccessAsync(msg, "reset",
-                                "⚠️ Discord reset complete – all roles, channels and DB entries removed.");
+                            LoggerUtil.LogWarning(
+                                $"[ADMIN_BOT] {authorTag} running RESET (destructive)");
+                            await _factionSync.ResetDiscordAsync().ConfigureAwait(false);
+                            await ReplySuccessAsync(
+                                msg,
+                                "reset",
+                                "Discord reset complete. All roles, channels and DB entries removed.").ConfigureAwait(false);
                             break;
                         }
 
-                    // ── reload ─────────────────────────────────────────
                     case "reload":
                         {
                             var newCfg = MainConfig.Load();
                             if (newCfg != null)
                             {
-                                await ReplySuccessAsync(msg, "reload", "Configuration reloaded successfully.");
-                                LoggerUtil.LogSuccess($"[ADMIN_BOT] Config reloaded by {authorTag}");
+                                await ReplySuccessAsync(
+                                    msg,
+                                    "reload",
+                                    "Configuration reloaded successfully.").ConfigureAwait(false);
+                                LoggerUtil.LogSuccess(
+                                    $"[ADMIN_BOT] Config reloaded by {authorTag}");
                             }
                             else
                             {
-                                await ReplyErrorAsync(msg, "reload",
-                                    "Failed to reload configuration – keeping old config.");
+                                await ReplyErrorAsync(
+                                    msg,
+                                    "reload",
+                                    "Failed to reload configuration. Keeping old config.").ConfigureAwait(false);
                             }
+
                             break;
                         }
 
-                    // ── verify:list ────────────────────────────────────
                     case "verify:list":
                         {
                             var verified = _db?.GetAllVerifiedPlayers();
                             if (verified == null || verified.Count == 0)
                             {
-                                await ReplyInfoAsync(msg, "verify:list", "No verified users found.");
+                                await ReplyInfoAsync(msg, "verify:list", "No verified users found.").ConfigureAwait(false);
                                 break;
                             }
+
                             var sb = new StringBuilder();
                             int i = 1;
                             foreach (var v in verified)
+                            {
                                 sb.AppendLine(
                                     $"{i++}. **{EscapeMd(v.DiscordUsername)}** | SteamID: `{v.SteamID}` | " +
                                     $"Player: {EscapeMd(v.GamePlayerName ?? "?")} | " +
                                     $"Since: {v.VerifiedAt:yyyy-MM-dd HH:mm}");
-                            await ReplyInfoAsync(msg, $"verify:list ({verified.Count} users)", sb.ToString());
+                            }
+
+                            await ReplyInfoAsync(
+                                msg,
+                                $"verify:list ({verified.Count} users)",
+                                sb.ToString()).ConfigureAwait(false);
                             break;
                         }
 
-                    // ── verify:pending ─────────────────────────────────
                     case "verify:pending":
                         {
                             var pending = _db?.GetAllPendingVerifications();
                             if (pending == null || pending.Count == 0)
                             {
-                                await ReplyInfoAsync(msg, "verify:pending", "No pending verifications.");
+                                await ReplyInfoAsync(msg, "verify:pending", "No pending verifications.").ConfigureAwait(false);
                                 break;
                             }
+
                             var sb = new StringBuilder();
                             int i = 1;
                             foreach (var p in pending)
@@ -284,211 +247,268 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                                     $"{i++}. **{EscapeMd(p.DiscordUsername)}** | SteamID: `{p.SteamID}` | " +
                                     $"Code: `{p.VerificationCode}` | {timeLeft}");
                             }
-                            await ReplyInfoAsync(msg, $"verify:pending ({pending.Count})", sb.ToString());
+
+                            await ReplyInfoAsync(
+                                msg,
+                                $"verify:pending ({pending.Count})",
+                                sb.ToString()).ConfigureAwait(false);
                             break;
                         }
 
-                    // ── verify:delete <STEAMID> ────────────────────────
                     case "verify:delete":
                         {
                             if (parts.Length < 2)
                             {
-                                await ReplyErrorAsync(msg, "verify:delete",
-                                    "Usage: `!tds verify:delete <SteamID>`");
+                                await ReplyErrorAsync(
+                                    msg,
+                                    "verify:delete",
+                                    "Usage: `/tds verify delete steamid:<SteamID>`").ConfigureAwait(false);
                                 return;
                             }
+
                             if (!long.TryParse(parts[1], out long delSteamId))
                             {
-                                await ReplyErrorAsync(msg, "verify:delete",
-                                    $"Invalid SteamID: `{parts[1]}`");
+                                await ReplyErrorAsync(
+                                    msg,
+                                    "verify:delete",
+                                    $"Invalid SteamID: `{parts[1]}`").ConfigureAwait(false);
                                 return;
                             }
-                            var vp = _db?.GetVerifiedPlayer(delSteamId);
-                            var pp = _db?.GetPendingVerification(delSteamId);
-                            if (vp == null && pp == null)
+
+                            var verified = _db?.GetVerifiedPlayer(delSteamId);
+                            var pending = _db?.GetPendingVerification(delSteamId);
+                            if (verified == null && pending == null)
                             {
-                                await ReplyErrorAsync(msg, "verify:delete",
-                                    $"No verification record found for SteamID `{delSteamId}`");
+                                await ReplyErrorAsync(
+                                    msg,
+                                    "verify:delete",
+                                    $"No verification record found for SteamID `{delSteamId}`").ConfigureAwait(false);
                                 return;
                             }
-                            string name = vp?.DiscordUsername ?? pp?.DiscordUsername ?? delSteamId.ToString();
+
+                            string name =
+                                verified?.DiscordUsername
+                                ?? pending?.DiscordUsername
+                                ?? delSteamId.ToString();
                             _db?.DeletePendingVerification(delSteamId);
                             _db?.DeleteVerifiedPlayer(delSteamId);
-                            await ReplySuccessAsync(msg, "verify:delete",
-                                $"Verification removed for **{EscapeMd(name)}** (SteamID: `{delSteamId}`)");
-                            LoggerUtil.LogInfo($"[ADMIN_BOT] {authorTag} deleted verification for {delSteamId}");
+                            await ReplySuccessAsync(
+                                msg,
+                                "verify:delete",
+                                $"Verification removed for **{EscapeMd(name)}** (SteamID: `{delSteamId}`)").ConfigureAwait(false);
+                            LoggerUtil.LogInfo(
+                                $"[ADMIN_BOT] {authorTag} deleted verification for {delSteamId}");
                             break;
                         }
 
-                    // ── unverify <STEAMID> [reason] ────────────────────
                     case "unverify":
                         {
                             if (parts.Length < 2)
                             {
-                                await ReplyErrorAsync(msg, "unverify",
-                                    "Usage: `!tds unverify <SteamID> [reason]`");
+                                await ReplyErrorAsync(
+                                    msg,
+                                    "unverify",
+                                    "Usage: `/tds unverify steamid:<SteamID> [reason]`").ConfigureAwait(false);
                                 return;
                             }
-                            if (!long.TryParse(parts[1], out long uvSteamId))
+
+                            if (!long.TryParse(parts[1], out long unverifySteamId))
                             {
-                                await ReplyErrorAsync(msg, "unverify",
-                                    $"Invalid SteamID: `{parts[1]}`");
+                                await ReplyErrorAsync(
+                                    msg,
+                                    "unverify",
+                                    $"Invalid SteamID: `{parts[1]}`").ConfigureAwait(false);
                                 return;
                             }
+
                             string reason = parts.Length > 2
                                 ? string.Join(" ", parts.Skip(2))
                                 : "Removed by Discord admin";
-                            var vp = _db?.GetVerifiedPlayer(uvSteamId);
-                            var pp = _db?.GetPendingVerification(uvSteamId);
-                            if (vp == null && pp == null)
+                            var verified = _db?.GetVerifiedPlayer(unverifySteamId);
+                            var pending = _db?.GetPendingVerification(unverifySteamId);
+                            if (verified == null && pending == null)
                             {
-                                await ReplyErrorAsync(msg, "unverify",
-                                    $"No verification record found for SteamID `{uvSteamId}`");
+                                await ReplyErrorAsync(
+                                    msg,
+                                    "unverify",
+                                    $"No verification record found for SteamID `{unverifySteamId}`").ConfigureAwait(false);
                                 return;
                             }
-                            string name = vp?.DiscordUsername ?? pp?.DiscordUsername ?? uvSteamId.ToString();
-                            _db?.DeletePendingVerification(uvSteamId);
-                            _db?.DeleteVerifiedPlayer(uvSteamId);
-                            await ReplySuccessAsync(msg, "unverify",
-                                $"Verification removed for **{EscapeMd(name)}** (SteamID: `{uvSteamId}`)\nReason: {EscapeMd(reason)}");
-                            _ = _eventLog?.LogAsync("UnverifyCommand",
-                                $"Discord admin {authorTag} | unverified {uvSteamId} | Reason: {reason}");
+
+                            string name =
+                                verified?.DiscordUsername
+                                ?? pending?.DiscordUsername
+                                ?? unverifySteamId.ToString();
+                            _db?.DeletePendingVerification(unverifySteamId);
+                            _db?.DeleteVerifiedPlayer(unverifySteamId);
+                            await ReplySuccessAsync(
+                                msg,
+                                "unverify",
+                                $"Verification removed for **{EscapeMd(name)}** (SteamID: `{unverifySteamId}`)\nReason: {EscapeMd(reason)}").ConfigureAwait(false);
+                            _ = _eventLog?.LogAsync(
+                                "UnverifyCommand",
+                                $"Discord admin {authorTag} | unverified {unverifySteamId} | Reason: {reason}");
                             break;
                         }
 
-                    // ── status ─────────────────────────────────────────
                     case "status":
                         {
                             var factions = _db?.GetAllFactions();
                             int totalFactions = factions?.Count ?? 0;
-                            int totalPlayers  = factions?.Sum(f => f.Players?.Count ?? 0) ?? 0;
-                            int synced        = factions?.Count(f => f.SyncStatus == "Synced") ?? 0;
-                            int verified      = _db?.GetAllVerifiedPlayers()?.Count ?? 0;
-                            int pending       = _db?.GetAllPendingVerifications()?.Count ?? 0;
+                            int totalPlayers = factions?.Sum(f => f.Players?.Count ?? 0) ?? 0;
+                            int synced = factions?.Count(f => f.SyncStatus == "Synced") ?? 0;
+                            int verified = _db?.GetAllVerifiedPlayers()?.Count ?? 0;
+                            int pending = _db?.GetAllPendingVerifications()?.Count ?? 0;
 
                             var sb = new StringBuilder();
                             sb.AppendLine($"**Factions:** {totalFactions} ({synced} synced)");
                             sb.AppendLine($"**Players tracked:** {totalPlayers}");
                             sb.AppendLine($"**Verified players:** {verified}");
                             sb.AppendLine($"**Pending verifications:** {pending}");
-                            sb.AppendLine($"**Chat sync:** {(_config?.Chat?.Enabled == true ? "✅" : "❌")}");
-                            sb.AppendLine($"**Death logging:** {(_config?.Death?.Enabled == true ? "✅" : "❌")}");
-                            await ReplyInfoAsync(msg, "status", sb.ToString());
+                            sb.AppendLine($"**Chat sync:** {(_config?.Chat?.Enabled == true ? "YES" : "NO")}");
+                            sb.AppendLine($"**Death logging:** {(_config?.Death?.Enabled == true ? "YES" : "NO")}");
+                            await ReplyInfoAsync(msg, "status", sb.ToString()).ConfigureAwait(false);
                             break;
                         }
 
-                    // ── unknown ─────────────────────────────────────────
                     default:
-                        await ReplyErrorAsync(msg, sub,
-                            $"Unknown command `!tds {sub}`. Type `!tds help` for available commands.");
+                        await ReplyErrorAsync(
+                            msg,
+                            sub,
+                            $"Unknown command `/tds {sub}`. Type `/tds help` for available commands.").ConfigureAwait(false);
                         break;
                 }
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogError($"[ADMIN_BOT] ExecuteAsync error for '{subRaw}': {ex.Message}");
-                await ReplyErrorAsync(msg, sub, $"Internal error: {ex.Message}");
+                LoggerUtil.LogError(
+                    $"[ADMIN_BOT] ExecuteAsync error for '{subRaw}': {ex.Message}");
+                await ReplyErrorAsync(msg, sub, $"Internal error: {ex.Message}").ConfigureAwait(false);
             }
         }
 
-        // ================================================================
-        // HELP EMBED
-        // ================================================================
-
-        private async Task ReplyHelpAsync(SocketMessage msg)
+        private async Task ReplyHelpAsync(DiscordIncomingMessage msg)
         {
-            var eb = new EmbedBuilder()
-                .WithTitle("📋 TDS Admin Commands")
-                .WithColor(new Color(0x5865F2))  // Discord blurple
-                .WithDescription("Available commands in this admin channel:")
-                .WithFooter("TorchDiscordSync · admin bot channel")
-                .WithCurrentTimestamp();
+            var embed = new DiscordEmbedModel
+            {
+                Title = "TDS Admin Commands",
+                ColorRgb = 0x5865F2,
+                Description = "Available commands in this admin channel:",
+                Footer = "TorchDiscordSync admin bot channel",
+                IncludeTimestamp = true,
+            };
 
-            eb.AddField("🔄 Sync Commands",
-                "`!tds sync`              – Full faction synchronization\n" +
-                "`!tds sync:check`        – Check status of all faction syncs\n" +
-                "`!tds sync:status`       – Summary (synced/pending/failed)\n" +
-                "`!tds sync:cleanup`      – Delete orphaned Discord roles/channels\n" +
-                "`!tds sync:undo <TAG>`   – Undo sync for specific faction\n" +
-                "`!tds sync:undo_all`     – ⚠️ Undo ALL faction syncs",
-                inline: false);
+            embed.Fields.Add(
+                new DiscordEmbedFieldModel
+                {
+                    Name = "Sync Commands",
+                    Value =
+                        "`/tds sync run`\n"
+                        + "`/tds sync check`\n"
+                        + "`/tds sync status`\n"
+                        + "`/tds cleanup`\n"
+                        + "`/tds sync undo faction-tag:<TAG>`\n"
+                        + "`/tds sync undoall`",
+                    Inline = false,
+                });
+            embed.Fields.Add(
+                new DiscordEmbedFieldModel
+                {
+                    Name = "Verification Commands",
+                    Value =
+                        "`/tds verify list`\n"
+                        + "`/tds verify pending`\n"
+                        + "`/tds verify delete steamid:<SteamID>`\n"
+                        + "`/tds unverify steamid:<SteamID> [reason]`",
+                    Inline = false,
+                });
+            embed.Fields.Add(
+                new DiscordEmbedFieldModel
+                {
+                    Name = "General Commands",
+                    Value =
+                        "`/tds status`\n"
+                        + "`/tds reload`\n"
+                        + "`/tds reset`\n"
+                        + "`/tds help`",
+                    Inline = false,
+                });
 
-            eb.AddField("🔒 Verification Commands",
-                "`!tds verify:list`             – List all verified players\n" +
-                "`!tds verify:pending`          – List pending verifications\n" +
-                "`!tds verify:delete <SteamID>` – Delete verification record\n" +
-                "`!tds unverify <SteamID> [reason]` – Remove player verification",
-                inline: false);
-
-            eb.AddField("⚙️ General Commands",
-                "`!tds status`  – Plugin and server status\n" +
-                "`!tds reload`  – Reload configuration from disk\n" +
-                "`!tds reset`   – ⚠️ DESTRUCTIVE: delete all Discord roles/channels\n" +
-                "`!tds help`    – Show this help",
-                inline: false);
-
-            eb.AddField("ℹ️ Notes",
-                "• All commands are logged\n" +
-                "• Bot replies with result after execution\n" +
-                "• This channel is admin-only, not visible to players",
-                inline: false);
-
-            await ((IMessageChannel)msg.Channel).SendMessageAsync(embed: eb.Build());
+            await SendEmbedAsync(msg.ChannelId, embed).ConfigureAwait(false);
         }
 
-        // ================================================================
-        // REPLY HELPERS
-        // ================================================================
-
-        private async Task ReplySuccessAsync(SocketMessage msg, string cmdName, string result)
+        private async Task ReplySuccessAsync(
+            DiscordIncomingMessage msg,
+            string cmdName,
+            string result)
         {
-            string description = TruncateForEmbed(result);
-            var embed = new EmbedBuilder()
-                .WithTitle($"✅ {cmdName}")
-                .WithColor(Color.Green)
-                .WithDescription(string.IsNullOrEmpty(description) ? "Done." : description)
-                .WithCurrentTimestamp()
-                .Build();
-            await ((IMessageChannel)msg.Channel).SendMessageAsync(embed: embed);
+            await SendEmbedAsync(
+                msg.ChannelId,
+                new DiscordEmbedModel
+                {
+                    Title = "SUCCESS " + cmdName,
+                    ColorRgb = 0x57F287,
+                    Description = TruncateForEmbed(result),
+                    IncludeTimestamp = true,
+                }).ConfigureAwait(false);
         }
 
-        private async Task ReplyErrorAsync(SocketMessage msg, string cmdName, string error)
+        private async Task ReplyErrorAsync(
+            DiscordIncomingMessage msg,
+            string cmdName,
+            string error)
         {
-            var embed = new EmbedBuilder()
-                .WithTitle($"❌ {cmdName}")
-                .WithColor(Color.Red)
-                .WithDescription(TruncateForEmbed(error))
-                .WithCurrentTimestamp()
-                .Build();
-            await ((IMessageChannel)msg.Channel).SendMessageAsync(embed: embed);
+            await SendEmbedAsync(
+                msg.ChannelId,
+                new DiscordEmbedModel
+                {
+                    Title = "ERROR " + cmdName,
+                    ColorRgb = 0xED4245,
+                    Description = TruncateForEmbed(error),
+                    IncludeTimestamp = true,
+                }).ConfigureAwait(false);
         }
 
-        private async Task ReplyInfoAsync(SocketMessage msg, string cmdName, string info)
+        private async Task ReplyInfoAsync(
+            DiscordIncomingMessage msg,
+            string cmdName,
+            string info)
         {
-            var embed = new EmbedBuilder()
-                .WithTitle($"ℹ️ {cmdName}")
-                .WithColor(Color.Blue)
-                .WithDescription(TruncateForEmbed(info))
-                .WithCurrentTimestamp()
-                .Build();
-            await ((IMessageChannel)msg.Channel).SendMessageAsync(embed: embed);
+            await SendEmbedAsync(
+                msg.ChannelId,
+                new DiscordEmbedModel
+                {
+                    Title = "INFO " + cmdName,
+                    ColorRgb = 0x5865F2,
+                    Description = TruncateForEmbed(info),
+                    IncludeTimestamp = true,
+                }).ConfigureAwait(false);
         }
 
-        // ================================================================
-        // UTILITIES
-        // ================================================================
+        private async Task SendEmbedAsync(ulong channelId, DiscordEmbedModel embed)
+        {
+            bool sent = await _discord.SendEmbedAsync(channelId, embed).ConfigureAwait(false);
+            if (!sent)
+                LoggerUtil.LogWarning("[ADMIN_BOT] Failed to send embed reply to Discord");
+        }
 
-        /// <summary>Discord embed description max is 4096 chars.</summary>
         private static string TruncateForEmbed(string s, int max = 3900)
         {
-            if (string.IsNullOrEmpty(s)) return s;
-            return s.Length <= max ? s : s.Substring(0, max) + "\n…(truncated)";
+            if (string.IsNullOrEmpty(s))
+                return s;
+
+            return s.Length <= max ? s : s.Substring(0, max) + "\n...(truncated)";
         }
 
         private static string EscapeMd(string s)
         {
-            if (string.IsNullOrEmpty(s)) return s;
-            return s.Replace("*", "\\*").Replace("_", "\\_").Replace("`", "\\`").Replace("~", "\\~");
+            if (string.IsNullOrEmpty(s))
+                return s;
+
+            return s.Replace("*", "\\*")
+                .Replace("_", "\\_")
+                .Replace("`", "\\`")
+                .Replace("~", "\\~");
         }
     }
 }

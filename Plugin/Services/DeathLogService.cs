@@ -3,12 +3,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Models;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Models;
+using TorchDiscordSync.Plugin.Utils;
 using VRage.Game.ModAPI;
 
-namespace mamba.TorchDiscordSync.Plugin.Services
+namespace TorchDiscordSync.Plugin.Services
 {
     /// <summary>
     /// Service responsible for tracking, logging, and analyzing player death events.

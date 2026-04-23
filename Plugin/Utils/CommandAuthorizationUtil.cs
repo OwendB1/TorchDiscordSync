@@ -2,11 +2,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Models;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Models;
 using System.Threading.Tasks;
 
-namespace mamba.TorchDiscordSync.Plugin.Utils
+namespace TorchDiscordSync.Plugin.Utils
 {
     /// <summary>
     /// Handles command authorization and help text generation

@@ -1,7 +1,7 @@
 // Plugin/Models/CommandModel.cs
 using System;
 
-namespace mamba.TorchDiscordSync.Plugin.Models
+namespace TorchDiscordSync.Plugin.Models
 {
     /// <summary>
     /// Defines command properties and authorization level

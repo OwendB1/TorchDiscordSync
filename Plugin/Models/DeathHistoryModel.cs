@@ -1,7 +1,7 @@
 // Plugin/Models/DeathHistoryModel.cs
 using System;
 
-namespace mamba.TorchDiscordSync.Plugin.Models
+namespace TorchDiscordSync.Plugin.Models
 {
     [Serializable]
     public class DeathHistoryModel

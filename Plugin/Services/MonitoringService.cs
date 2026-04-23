@@ -2,22 +2,20 @@
 using System;
 using System.Threading.Tasks;
 using System.Timers;
-using Discord;
-using Discord.WebSocket;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Services;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Utils;
 using Sandbox.Game.World;
 using VRage.Game.ModAPI;
 
-namespace mamba.TorchDiscordSync.Plugin.Services
+namespace TorchDiscordSync.Plugin.Services
 {
     public class MonitoringService : IDisposable
     {
         private readonly MainConfig _config;
-        private readonly DiscordBotService _discordBot;
+        private readonly DiscordService _discord;
         private Timer _monitoringTimer;
         private bool _isDisposed = false;
+        private int _updateInProgress;
 
         // Last known values to avoid unnecessary Discord API calls
         private float _lastSimSpeed = -1f;
@@ -29,10 +27,10 @@ namespace mamba.TorchDiscordSync.Plugin.Services
         // NEW: Do not send SimSpeed alerts on very first check (server still starting)
         private bool _simSpeedAlertsReady = false;
 
-        public MonitoringService(MainConfig config, DiscordBotService discordBot)
+        public MonitoringService(MainConfig config, DiscordService discord)
         {
             _config = config;
-            _discordBot = discordBot;
+            _discord = discord;
 
             LoggerUtil.LogDebug("[MONITORING] MonitoringService instance created");
         }
@@ -68,7 +66,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 );
 
                 // Do initial update immediately
-                Task.Run(async () => await UpdateChannelNamesAsync());
+                QueueChannelNameUpdate();
             }
             catch (Exception ex)
             {
@@ -81,12 +79,33 @@ namespace mamba.TorchDiscordSync.Plugin.Services
             try
             {
                 LoggerUtil.LogDebug("[MONITORING] Timer elapsed - updating channel names");
-                Task.Run(async () => await UpdateChannelNamesAsync());
+                QueueChannelNameUpdate();
             }
             catch (Exception ex)
             {
                 LoggerUtil.LogError($"[MONITORING] Timer callback error: {ex.Message}");
             }
+        }
+
+        private void QueueChannelNameUpdate()
+        {
+            if (_isDisposed || System.Threading.Interlocked.Exchange(ref _updateInProgress, 1) == 1)
+            {
+                LoggerUtil.LogDebug("[MONITORING] Previous channel-name update still running; skipping tick");
+                return;
+            }
+
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await UpdateChannelNamesAsync().ConfigureAwait(false);
+                }
+                finally
+                {
+                    System.Threading.Interlocked.Exchange(ref _updateInProgress, 0);
+                }
+            });
         }
 
         private async Task UpdateChannelNamesAsync()
@@ -110,7 +129,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                         LoggerUtil.LogDebug(
                             $"[MONITORING_UPDATE] SimSpeed changed: {_lastSimSpeed:F2} → {currentSimSpeed:F2}"
                         );
-                        await UpdateSimSpeedChannelAsync(currentSimSpeed);
+                        await UpdateSimSpeedChannelAsync(currentSimSpeed).ConfigureAwait(false);
                         _lastSimSpeed = currentSimSpeed;
                     }
                     else
@@ -126,7 +145,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     LoggerUtil.LogDebug(
                         $"[MONITORING_UPDATE] Player count changed: {_lastPlayerCount} → {currentPlayerCount}"
                     );
-                    await UpdatePlayerCountChannelAsync(currentPlayerCount);
+                    await UpdatePlayerCountChannelAsync(currentPlayerCount).ConfigureAwait(false);
                     _lastPlayerCount = currentPlayerCount;
                 }
                 else
@@ -159,22 +178,9 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     return;
                 }
 
-                if (_discordBot == null || _discordBot.GetClient() == null)
+                if (_discord == null || !_discord.IsReady)
                 {
                     LoggerUtil.LogError("[MONITORING_SIMSPEED] Discord bot not ready");
-                    return;
-                }
-
-                var client = _discordBot.GetClient();
-                var channel = client.GetChannel(channelId) as SocketVoiceChannel;
-
-                if (channel == null)
-                {
-                    LoggerUtil.LogError(
-                        "[MONITORING_SIMSPEED] Channel "
-                            + channelId
-                            + " not found or not a voice channel"
-                    );
                     return;
                 }
 
@@ -189,10 +195,14 @@ namespace mamba.TorchDiscordSync.Plugin.Services
 
                 LoggerUtil.LogDebug("[MONITORING_SIMSPEED] Setting channel name to: " + newName);
 
-                await channel.ModifyAsync(props =>
+                bool updated = await _discord.UpdateChannelNameAsync(channelId, newName).ConfigureAwait(false);
+                if (!updated)
                 {
-                    props.Name = newName;
-                });
+                    LoggerUtil.LogError(
+                        "[MONITORING_SIMSPEED] Failed to update channel name for " + channelId
+                    );
+                    return;
+                }
 
                 LoggerUtil.LogSuccess("[MONITORING_SIMSPEED] Channel updated: " + newName);
 
@@ -222,7 +232,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                                     "{threshold}",
                                     _config.Monitoring.SimSpeedThreshold.ToString("F2")
                                 )
-                        );
+                        ).ConfigureAwait(false);
 
                         _lastSimSpeedAlertTime = DateTime.UtcNow; // Update timestamp
                         LoggerUtil.LogInfo("[MONITORING] SimSpeed alert sent (cooldown reset)");
@@ -271,18 +281,9 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     return;
                 }
 
-                if (_discordBot == null || _discordBot.GetClient() == null)
+                if (_discord == null || !_discord.IsReady)
                 {
                     LoggerUtil.LogError("[MONITORING_PLAYERS] Discord bot not ready");
-                    return;
-                }
-
-                var client = _discordBot.GetClient();
-                var channel = client.GetChannel(channelId) as SocketVoiceChannel;
-
-                if (channel == null)
-                {
-                    LoggerUtil.LogError("[MONITORING_PLAYERS] Channel " + channelId + " not found");
                     return;
                 }
 
@@ -294,10 +295,14 @@ namespace mamba.TorchDiscordSync.Plugin.Services
 
                 LoggerUtil.LogDebug("[MONITORING_PLAYERS] Setting channel name to: " + newName);
 
-                await channel.ModifyAsync(props =>
+                bool updated = await _discord.UpdateChannelNameAsync(channelId, newName).ConfigureAwait(false);
+                if (!updated)
                 {
-                    props.Name = newName;
-                });
+                    LoggerUtil.LogError(
+                        "[MONITORING_PLAYERS] Failed to update channel name for " + channelId
+                    );
+                    return;
+                }
 
                 LoggerUtil.LogSuccess("[MONITORING_PLAYERS] Channel updated: " + newName);
             }
@@ -329,23 +334,20 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     return;
                 }
 
-                var client = _discordBot.GetClient();
-                if (client == null)
+                if (_discord == null || !_discord.IsReady)
                 {
                     LoggerUtil.LogWarning("[MONITORING] Discord client not ready for alert");
                     return;
                 }
 
-                var channel = client.GetChannel(channelId) as IMessageChannel;
-                if (channel == null)
+                bool sent = await _discord.SendLogAsync(channelId, message).ConfigureAwait(false);
+                if (!sent)
                 {
                     LoggerUtil.LogWarning(
-                        "[MONITORING] Admin alert channel not found: " + channelId
+                        "[MONITORING] Failed to send admin alert to channel: " + channelId
                     );
                     return;
                 }
-
-                await channel.SendMessageAsync(message);
                 LoggerUtil.LogSuccess("[MONITORING] Admin alert sent");
             }
             catch (Exception ex)

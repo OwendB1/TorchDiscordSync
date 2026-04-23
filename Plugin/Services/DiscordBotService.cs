@@ -1,1620 +1,1142 @@
-// Plugin/Services/DiscordBotService.cs
 using System;
-using System.Linq;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.IO.Pipes;
+using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
-using Discord;
-using Discord.Net.Providers.WS4Net;
-using Discord.Net.WebSockets;
-using Discord.Rest;
-using Discord.WebSocket;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using System.Xml;
+using TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Shared.Ipc;
 
-namespace mamba.TorchDiscordSync.Plugin.Services
+namespace TorchDiscordSync.Plugin.Services
 {
     /// <summary>
-    /// Core Discord bot service using Discord.Net
-    /// Handles connection, events, commands and message processing
+    /// Thin Torch-side wrapper that launches the external Discord host process
+    /// and communicates with it over a named pipe.
     /// </summary>
     public class DiscordBotService
     {
-        private readonly DiscordBotConfig _config;
-        private DiscordSocketClient _client;
-        private bool _isConnected = false;
-        private bool _isReady = false;
+        private const string HostExecutableFileName = "TorchDiscordSync.DiscordHost.exe";
+        private const string HostManagedDllFileName = "TorchDiscordSync.DiscordHost.dll";
+        private const string HostAppHostFileName = "TorchDiscordSync.DiscordHost";
+        private const string PluginManifestGuid = "e1b1e28a-7b3c-4b8d-bfc3-5d9c1f8d9e6f";
 
-        /// <summary>
-        /// Event triggered when a message is received (used for chat sync)
-        /// </summary>
-        public event Func<SocketMessage, Task> OnMessageReceivedEvent;
+        private readonly SemaphoreSlim _lifecycleLock = new SemaphoreSlim(1, 1);
+        private readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
+        private readonly object _eventDispatchLock = new object();
+        private readonly ConcurrentDictionary<string, TaskCompletionSource<DiscordIpcEnvelope>>
+            _pendingRequests =
+                new ConcurrentDictionary<string, TaskCompletionSource<DiscordIpcEnvelope>>();
 
-        public DiscordBotService(DiscordBotConfig config)
+        private DiscordRuntimeConfig _config;
+        private DiscordConnectionState _connectionState = new DiscordConnectionState();
+        private Task _eventDispatchTask = Task.FromResult(0);
+        private CancellationTokenSource _pipeCancellation;
+        private Task _readerTask;
+        private NamedPipeClientStream _pipeStream;
+        private Process _hostProcess;
+        private string _pipeName;
+
+        public event Func<DiscordIncomingMessage, Task> OnMessageReceivedEvent;
+        public event Action<string, ulong, string> OnVerificationAttempt;
+        public event Action<DiscordConnectionState> OnConnectionStateChanged;
+
+        public DiscordBotService(DiscordRuntimeConfig config)
         {
             _config = config;
         }
 
-        /// <summary>
-        /// Get the underlying Discord client (for advanced operations if needed)
-        /// </summary>
-        public DiscordSocketClient GetClient()
+        public bool IsConnected
         {
-            return _client;
+            get { return _connectionState != null && _connectionState.IsConnected; }
         }
 
-        public ulong GetGuildId()
+        public bool IsReady
         {
-            return _config != null ? _config.GuildID : 0;
+            get { return _connectionState != null && _connectionState.IsReady; }
         }
 
-        /// <summary>
-        /// Initialize and connect the Discord bot
-        /// </summary>
-        public async Task<bool> ConnectAsync()
+        public async Task<bool> StartAsync()
         {
+            await _lifecycleLock.WaitAsync().ConfigureAwait(false);
             try
             {
-                if (_isConnected)
-                    return true;
-
-                LoggerUtil.LogInfo("[DISCORD_BOT] Initializing Discord bot...");
-                const GatewayIntents messageContentIntent = (GatewayIntents)32768;
-
-                var config = new DiscordSocketConfig
+                if (_pipeStream != null && _pipeStream.IsConnected)
                 {
-                    GatewayIntents =
-                        GatewayIntents.DirectMessages
-                        | GatewayIntents.Guilds
-                        | GatewayIntents.GuildMessages
-                        | GatewayIntents.GuildMembers
-                        // Discord.Net 2.4.0 predates the named MessageContent flag.
-                        | messageContentIntent
-                        |GatewayIntents.GuildPresences,
-                    WebSocketProvider = WS4NetProvider.Instance,
-                };
+                    return await InitializeOrUpdateAsync(DiscordIpcOperations.Initialize)
+                        .ConfigureAwait(false);
+                }
 
-                _client = new DiscordSocketClient(config);
+                if (_pipeStream != null || _hostProcess != null)
+                    await StopInternalAsync(false).ConfigureAwait(false);
 
-                // Hook events
-                _client.Log += OnClientLog;
-                _client.Ready += OnBotReady;
-                _client.Disconnected += OnBotDisconnected;
-                _client.MessageReceived += OnMessageReceived;
-                _client.UserJoined += OnUserJoined;
+                if (_config == null)
+                {
+                    LoggerUtil.LogError("[DISCORD_IPC] Discord runtime config is missing.");
+                    return false;
+                }
 
-                await _client.LoginAsync(TokenType.Bot, _config.BotToken);
-                await _client.StartAsync();
+                _pipeName = "tds-" + Guid.NewGuid().ToString("N");
+                if (!TryCreateHostProcessStartInfo(out var startInfo))
+                {
+                    LoggerUtil.LogError("[DISCORD_IPC] Discord host executable was not found.");
+                    return false;
+                }
 
-                _isConnected = true;
-                LoggerUtil.LogInfo(
-                    "[DISCORD_BOT] Login succeeded and gateway start requested; waiting for Ready event"
-                );
+                _hostProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+                _hostProcess.Exited += OnHostProcessExited;
 
-                return true;
+                if (!_hostProcess.Start())
+                {
+                    LoggerUtil.LogError("[DISCORD_IPC] Failed to start Discord host process.");
+                    CleanupProcess();
+                    return false;
+                }
+
+                if (startInfo.RedirectStandardOutput)
+                {
+                    _hostProcess.OutputDataReceived += OnHostOutputDataReceived;
+                    _hostProcess.BeginOutputReadLine();
+                }
+
+                if (startInfo.RedirectStandardError)
+                {
+                    _hostProcess.ErrorDataReceived += OnHostErrorDataReceived;
+                    _hostProcess.BeginErrorReadLine();
+                }
+
+                _pipeStream = new NamedPipeClientStream(
+                    ".",
+                    _pipeName,
+                    PipeDirection.InOut,
+                    PipeOptions.Asynchronous);
+
+                await Task.Run(delegate { _pipeStream.Connect(10000); }).ConfigureAwait(false);
+
+                _pipeCancellation = new CancellationTokenSource();
+                _readerTask = Task.Run(
+                    delegate { return ReadLoopAsync(_pipeCancellation.Token); },
+                    _pipeCancellation.Token);
+
+                return await InitializeOrUpdateAsync(DiscordIpcOperations.Initialize)
+                    .ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogError("[DISCORD_BOT] Connection failed: " + ex.Message);
+                LoggerUtil.LogError("[DISCORD_IPC] StartAsync failed: " + ex.Message);
+                await StopInternalAsync(false).ConfigureAwait(false);
                 return false;
             }
-        }
-
-        /// <summary>
-        /// Disconnect and cleanup the bot
-        /// </summary>
-        public async Task DisconnectAsync()
-        {
-            try
+            finally
             {
-                if (_client != null)
-                {
-                    // Unhook events to prevent memory leaks
-                    _client.Log -= OnClientLog;
-                    _client.Ready -= OnBotReady;
-                    _client.Disconnected -= OnBotDisconnected;
-                    _client.MessageReceived -= OnMessageReceived;
-                    _client.UserJoined -= OnUserJoined;
-
-                    await _client.LogoutAsync();
-                    await _client.StopAsync();
-                    _client.Dispose();
-                    _client = null;
-                }
-
-                _isConnected = false;
-                _isReady = false;
-                LoggerUtil.LogInfo("[DISCORD_BOT] Bot disconnected and cleaned up");
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Disconnect error: " + ex.Message);
+                _lifecycleLock.Release();
             }
         }
 
-        /// <summary>
-        /// Get the Discord guild (server) object
-        /// Used by DiscordService wrapper to check for existing roles/channels
-        /// </summary>
-        public IGuild GetGuild()
+        public async Task<bool> StopAsync()
         {
+            await _lifecycleLock.WaitAsync().ConfigureAwait(false);
             try
             {
-                if (!_isReady || _client == null)
-                {
-                    LoggerUtil.LogWarning("[DISCORD_BOT] Bot not ready or client is null");
-                    return null;
-                }
-
-                var guild = _client.GetGuild(_config.GuildID);
-                if (guild == null)
-                {
-                    LoggerUtil.LogWarning(
-                        "[DISCORD_BOT] Guild not found (ID: " + _config.GuildID + ")"
-                    );
-                }
-
-                return guild;
+                return await StopInternalAsync(true).ConfigureAwait(false);
             }
-            catch (Exception ex)
+            finally
             {
-                LoggerUtil.LogError("[DISCORD_BOT] Error getting guild: " + ex.Message);
-                return null;
+                _lifecycleLock.Release();
             }
         }
 
-        /// <summary>
-        /// Send direct message to a user (e.g. verification code)
-        /// </summary>
-        public async Task<bool> SendVerificationDMAsync(
-            string discordUsername,
-            string verificationCode
-        )
+        public async Task<bool> UpdateConfigurationAsync(DiscordRuntimeConfig config)
         {
-            try
-            {
-                if (!_isReady)
-                {
-                    LoggerUtil.LogError("[DISCORD_BOT] Bot not ready, cannot send DM");
-                    return false;
-                }
+            _config = config;
 
-                var user = FindUserByUsername(discordUsername);
-                if (user == null)
-                {
-                    LoggerUtil.LogWarning("[DISCORD_BOT] User not found: " + discordUsername);
-                    return false;
-                }
-
-                var dmChannel = await user.GetOrCreateDMChannelAsync();
-                if (dmChannel == null)
-                {
-                    LoggerUtil.LogWarning(
-                        "[DISCORD_BOT] Could not open DM with " + discordUsername
-                    );
-                    return false;
-                }
-
-                var embed = new EmbedBuilder()
-                    .WithColor(Color.Green)
-                    .WithTitle("🔐 Space Engineers Verification Request")
-                    .WithDescription(
-                        "Someone has requested to link your Discord account to a Space Engineers account."
-                    )
-                    .AddField("Verification Code", "```" + verificationCode + "```", false)
-                    .AddField(
-                        "To complete type here in this DM:\n",
-                        "```" + _config.BotPrefix + "verify key:" + verificationCode + "```",
-                        false
-                    )
-                    .AddField(
-                        "⏱️ Expires",
-                        "This code will expire in "
-                            + _config.VerificationCodeExpirationMinutes
-                            + " minutes",
-                        false
-                    )
-                    .WithFooter("If you didn't request this, ignore this message")
-                    .WithTimestamp(DateTime.UtcNow)
-                    .Build();
-
-                await dmChannel.SendMessageAsync(embed: embed);
-                LoggerUtil.LogSuccess("[DISCORD_BOT] Sent verification DM to " + discordUsername);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Send DM error: " + ex.Message);
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
                 return false;
-            }
+
+            return await InitializeOrUpdateAsync(DiscordIpcOperations.UpdateConfiguration)
+                .ConfigureAwait(false);
         }
 
-        /// <summary>
-        /// Send success notification DM after verification
-        /// </summary>
-        public async Task<bool> SendVerificationSuccessDMAsync(
-            string discordUsername,
-            string playerName,
-            long steamID
-        )
+        public async Task<DiscordConnectionState> GetConnectionStateAsync()
         {
-            try
-            {
-                if (!_isReady)
-                    return false;
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
+                return new DiscordConnectionState();
 
-                var user = FindUserByUsername(discordUsername);
-                if (user == null)
-                    return false;
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.GetConnectionState,
+                    null,
+                    15000)
+                .ConfigureAwait(false);
 
-                var dmChannel = await user.GetOrCreateDMChannelAsync();
-                if (dmChannel == null)
-                    return false;
-
-                var embed = new EmbedBuilder()
-                    .WithColor(Color.Green)
-                    .WithTitle("✅ Verification Successful!")
-                    .WithDescription("Your Discord account has been linked to Space Engineers.")
-                    .AddField("Game Player", playerName, true)
-                    .AddField("Steam ID", steamID.ToString(), true)
-                    .AddField(
-                        "✨ Features unlocked",
-                        "Faction channels, death notifications, chat sync",
-                        false
-                    )
-                    .WithFooter("Welcome to the server!")
-                    .WithTimestamp(DateTime.UtcNow)
-                    .Build();
-
-                await dmChannel.SendMessageAsync(embed: embed);
-                LoggerUtil.LogSuccess("[DISCORD_BOT] Sent success DM to " + discordUsername);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Send success DM error: " + ex.Message);
-                return false;
-            }
+            return response.Payload as DiscordConnectionState ?? new DiscordConnectionState();
         }
 
-        /// <summary>
-        /// Send verification result DM to user after they complete verification
-        /// Called by Plugin.HandleVerificationAsync() after VerifyFromDiscordAsync() completes
-        /// NEW: Tells user if their verification was successful or failed
-        /// </summary>
+        public async Task<bool> SendVerificationDMAsync(string discordUsername, string verificationCode)
+        {
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
+                return false;
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.SendVerificationDm,
+                    new DiscordVerificationRequest
+                    {
+                        DiscordUsername = discordUsername,
+                        VerificationCode = verificationCode,
+                    })
+                .ConfigureAwait(false);
+
+            return response.Success;
+        }
+
         public async Task<bool> SendVerificationResultDMAsync(
             string discordUsername,
             ulong discordUserID,
             string resultMessage,
-            bool success
-        )
+            bool success)
         {
-            try
-            {
-                // Check if bot is ready to send messages
-                if (!_isReady)
-                {
-                    LoggerUtil.LogError(
-                        "[DISCORD_BOT] Bot not ready, cannot send verification result"
-                    );
-                    return false;
-                }
-
-                // Find user by Discord ID
-                var user = _client.GetUser(discordUserID);
-                if (user == null)
-                {
-                    LoggerUtil.LogWarning(
-                        "[DISCORD_BOT] User not found by Discord ID: " + discordUserID
-                    );
-                    return false;
-                }
-
-                // Open DM channel with user
-                var dmChannel = await user.GetOrCreateDMChannelAsync();
-                if (dmChannel == null)
-                {
-                    LoggerUtil.LogWarning(
-                        "[DISCORD_BOT] Could not open DM with " + discordUsername
-                    );
-                    return false;
-                }
-
-                // Create embed with result
-                var embed = new EmbedBuilder()
-                    .WithColor(success ? Color.Green : Color.Red) // Green for success, red for failure
-                    .WithTitle(success ? "✅ Verification Successful!" : "❌ Verification Failed")
-                    .WithDescription(resultMessage) // Show the detailed result message
-                    .WithTimestamp(DateTime.UtcNow)
-                    .Build();
-
-                // Send the embed message to user's DM
-                await dmChannel.SendMessageAsync(embed: embed);
-
-                LoggerUtil.LogSuccess(
-                    "[DISCORD_BOT] Sent verification result DM to "
-                        + discordUsername
-                        + " (Status: "
-                        + (success ? "SUCCESS" : "FAILED")
-                        + ")"
-                );
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError(
-                    "[DISCORD_BOT] Send verification result DM error: " + ex.Message
-                );
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
                 return false;
-            }
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.SendVerificationResultDm,
+                    new DiscordVerificationResultMessage
+                    {
+                        DiscordUsername = discordUsername,
+                        DiscordUserId = discordUserID,
+                        Message = resultMessage,
+                        IsSuccess = success,
+                    })
+                .ConfigureAwait(false);
+
+            return response.Success;
         }
 
-        /// <summary>
-        /// Send message to a specific channel
-        /// </summary>
         public async Task<bool> SendChannelMessageAsync(ulong channelID, string message)
         {
-            try
-            {
-                if (!_isReady)
-                    return false;
-
-                var channel = _client.GetChannel(channelID) as IMessageChannel;
-                if (channel == null)
-                {
-                    LoggerUtil.LogWarning("[DISCORD_BOT] Channel not found: " + channelID);
-                    return false;
-                }
-
-                await channel.SendMessageAsync(message);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Send channel message error: " + ex.Message);
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
                 return false;
-            }
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.SendChannelMessage,
+                    new DiscordMessageRequest
+                    {
+                        ChannelId = channelID,
+                        Content = message,
+                    })
+                .ConfigureAwait(false);
+
+            return response.Success;
         }
 
-        /// <summary>
-        /// Send embed message to a channel
-        /// </summary>
-        public async Task<bool> SendEmbedAsync(ulong channelID, Embed embed)
+        public async Task<bool> SendEmbedAsync(ulong channelID, DiscordEmbedModel embed)
         {
-            try
-            {
-                if (!_isReady)
-                    return false;
-
-                var channel = _client.GetChannel(channelID) as IMessageChannel;
-                if (channel == null)
-                    return false;
-
-                await channel.SendMessageAsync(embed: embed);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Send embed error: " + ex.Message);
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
                 return false;
-            }
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.SendEmbedMessage,
+                    new DiscordSendEmbedRequest
+                    {
+                        ChannelId = channelID,
+                        Embed = embed,
+                    })
+                .ConfigureAwait(false);
+
+            return response.Success;
         }
 
-        /// <summary>
-        /// Create a new role in the guild
-        /// </summary>
-        public async Task<ulong> CreateRoleAsync(string roleName, Color? color = null)
+        public async Task<ulong> CreateRoleAsync(string roleName)
         {
-            try
-            {
-                if (!_isReady)
-                    return 0;
-
-                var guild = _client.GetGuild(_config.GuildID);
-                if (guild == null)
-                {
-                    LoggerUtil.LogError("[DISCORD_BOT] Guild not found");
-                    return 0;
-                }
-
-                var role = await guild.CreateRoleAsync(roleName, color: color, isHoisted: false, isMentionable: false);
-                LoggerUtil.LogSuccess("[DISCORD_BOT] Created role: " + roleName);
-                return role.Id;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Create role error: " + ex.Message);
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
                 return 0;
-            }
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.CreateRole,
+                    new DiscordCreateRoleRequest { RoleName = roleName })
+                .ConfigureAwait(false);
+
+            return GetIdResult(response);
         }
 
-        /// <summary>
-        /// Delete a role by ID
-        /// </summary>
         public async Task<bool> DeleteRoleAsync(ulong roleID)
         {
-            try
-            {
-                if (!_isReady)
-                    return false;
-
-                var guild = _client.GetGuild(_config.GuildID);
-                if (guild == null)
-                    return false;
-
-                var role = guild.GetRole(roleID);
-                if (role == null)
-                    return false;
-
-                await role.DeleteAsync();
-                LoggerUtil.LogSuccess("[DISCORD_BOT] Deleted role: " + roleID);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Delete role error: " + ex.Message);
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
                 return false;
-            }
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.DeleteRole,
+                    new DiscordDeleteRoleRequest { RoleId = roleID })
+                .ConfigureAwait(false);
+
+            return response.Success;
         }
 
-        /// <summary>
-        /// Create text channel in Discord with optional category and role permissions
-        /// FIXED: Creates channel with categoryID from the beginning
-        /// FIXED: Sets up permissions for faction role
-        /// </summary>
+        public async Task<DiscordRoleInfo> GetRoleInfoAsync(ulong roleId)
+        {
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
+                return null;
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.GetRoleInfo,
+                    new DiscordRoleQueryRequest { RoleId = roleId })
+                .ConfigureAwait(false);
+
+            return response.Payload as DiscordRoleInfo;
+        }
+
+        public async Task<ulong> FindRoleByNameAsync(string name)
+        {
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
+                return 0;
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.FindRoleByName,
+                    new DiscordRoleQueryRequest { RoleName = name })
+                .ConfigureAwait(false);
+
+            return GetIdResult(response);
+        }
+
         public async Task<ulong> CreateChannelAsync(
             string channelName,
-            ulong? categoryID = null,
-            ulong? roleID = null
-        )
+            DiscordChannelKind channelKind,
+            ulong? categoryId,
+            ulong? roleId)
         {
-            try
-            {
-                if (!_isReady)
-                {
-                    LoggerUtil.LogError("[DISCORD_BOT] Bot not ready, cannot create channel");
-                    return 0;
-                }
-
-                var guild = _client.GetGuild(_config.GuildID);
-                if (guild == null)
-                {
-                    LoggerUtil.LogError("[DISCORD_BOT] Guild not found for channel creation");
-                    return 0;
-                }
-
-                // ============================================================
-                // FIXED: Create channel with categoryID from the beginning
-                // ============================================================
-                RestTextChannel channel = null;
-
-                if (categoryID.HasValue && categoryID.Value > 0)
-                {
-                    var category = guild.GetCategoryChannel(categoryID.Value);
-                    if (category != null)
-                    {
-                        try
-                        {
-                            // Create directly in category
-                            channel = await guild.CreateTextChannelAsync(
-                                channelName,
-                                x => x.CategoryId = categoryID.Value
-                            );
-                            LoggerUtil.LogDebug(
-                                "[DISCORD_BOT] Created channel in category (ID: "
-                                    + categoryID.Value
-                                    + ")"
-                            );
-                        }
-                        catch (Exception ex)
-                        {
-                            LoggerUtil.LogWarning(
-                                "[DISCORD_BOT] Failed to create in category: " + ex.Message
-                            );
-                            // Fallback: create without category
-                            channel = await guild.CreateTextChannelAsync(channelName);
-                        }
-                    }
-                    else
-                    {
-                        LoggerUtil.LogWarning(
-                            "[DISCORD_BOT] Category not found (ID: "
-                                + categoryID.Value
-                                + ") - creating channel without category"
-                        );
-                        channel = await guild.CreateTextChannelAsync(channelName);
-                    }
-                }
-                else
-                {
-                    // No category specified
-                    channel = await guild.CreateTextChannelAsync(channelName);
-                }
-
-                if (channel == null)
-                {
-                    LoggerUtil.LogError("[DISCORD_BOT] Failed to create channel: " + channelName);
-                    return 0;
-                }
-
-                // ============================================================
-                // FIXED: Set up permissions if roleID is provided
-                // ============================================================
-                if (roleID.HasValue && roleID.Value > 0)
-                {
-                    try
-                    {
-                        var role = guild.GetRole(roleID.Value);
-                        if (role != null)
-                        {
-                            // Deny access for @everyone
-                            await channel.AddPermissionOverwriteAsync(
-                                guild.EveryoneRole,
-                                new OverwritePermissions(viewChannel: PermValue.Deny)
-                            );
-
-                            // Allow access for faction role
-                            await channel.AddPermissionOverwriteAsync(
-                                role,
-                                new OverwritePermissions(
-                                    viewChannel: PermValue.Allow,
-                                    sendMessages: PermValue.Allow
-                                )
-                            );
-
-                            LoggerUtil.LogDebug(
-                                "[DISCORD_BOT] Set permissions for channel "
-                                    + channelName
-                                    + " (Role: "
-                                    + role.Name
-                                    + ")"
-                            );
-                        }
-                        else
-                        {
-                            LoggerUtil.LogWarning(
-                                "[DISCORD_BOT] Role not found for permission setup (ID: "
-                                    + roleID.Value
-                                    + ")"
-                            );
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        LoggerUtil.LogWarning(
-                            "[DISCORD_BOT] Failed to set channel permissions: " + ex.Message
-                        );
-                    }
-                }
-
-                LoggerUtil.LogSuccess(
-                    "[DISCORD_BOT] Created text channel: "
-                        + channelName
-                        + " (ID: "
-                        + channel.Id
-                        + ")"
-                );
-                return channel.Id;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Create channel error: " + ex.Message);
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
                 return 0;
-            }
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.CreateChannel,
+                    new DiscordCreateChannelRequest
+                    {
+                        ChannelName = channelName,
+                        ChannelKind = channelKind,
+                        CategoryId = categoryId,
+                        RoleId = roleId,
+                    })
+                .ConfigureAwait(false);
+
+            return GetIdResult(response);
         }
 
-        /// <summary>
-        /// Create voice channel with same category and role permissions as faction. Name = lowercase (same as faction).
-        /// </summary>
-        public async Task<ulong> CreateVoiceChannelAsync(
-            string channelName,
-            ulong? categoryID = null,
-            ulong? roleID = null
-        )
-        {
-            try
-            {
-                if (!_isReady)
-                {
-                    LoggerUtil.LogError("[DISCORD_BOT] Bot not ready");
-                    return 0;
-                }
-                var guild = _client.GetGuild(_config.GuildID);
-                if (guild == null)
-                {
-                    LoggerUtil.LogError("[DISCORD_BOT] Guild not found");
-                    return 0;
-                }
-
-                RestVoiceChannel channel = null;
-                if (categoryID.HasValue && categoryID.Value > 0)
-                {
-                    var cat = guild.GetCategoryChannel(categoryID.Value);
-                    if (cat != null)
-                        channel = await guild.CreateVoiceChannelAsync(
-                            channelName,
-                            x => x.CategoryId = categoryID.Value
-                        );
-                    else
-                        channel = await guild.CreateVoiceChannelAsync(channelName);
-                }
-                else
-                    channel = await guild.CreateVoiceChannelAsync(channelName);
-
-                if (channel == null)
-                    return 0;
-                if (roleID.HasValue && roleID.Value > 0)
-                {
-                    var role = guild.GetRole(roleID.Value);
-                    if (role != null)
-                    {
-                        await channel.AddPermissionOverwriteAsync(
-                            guild.EveryoneRole,
-                            new OverwritePermissions(viewChannel: PermValue.Deny)
-                        );
-                        await channel.AddPermissionOverwriteAsync(
-                            role,
-                            new OverwritePermissions(
-                                viewChannel: PermValue.Allow,
-                                connect: PermValue.Allow,
-                                speak: PermValue.Allow
-                            )
-                        );
-                    }
-                }
-                LoggerUtil.LogSuccess(
-                    "[DISCORD_BOT] Created voice channel: "
-                        + channelName
-                        + " (ID: "
-                        + channel.Id
-                        + ")"
-                );
-                return channel.Id;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Create voice channel error: " + ex.Message);
-                return 0;
-            }
-        }
-
-        /// <summary>
-        /// Delete a channel by ID
-        /// </summary>
         public async Task<bool> DeleteChannelAsync(ulong channelID)
         {
-            try
-            {
-                if (!_isReady)
-                    return false;
-
-                var guild = _client.GetGuild(_config.GuildID);
-                if (guild == null)
-                    return false;
-
-                var channel = guild.GetChannel(channelID);
-                if (channel == null)
-                {
-                    LoggerUtil.LogWarning(
-                        "[DISCORD_BOT] Channel not found for deletion: " + channelID
-                    );
-                    return false;
-                }
-
-                // Cast to IGuildChannel - ima DeleteAsync()
-                var guildChannel = channel as IGuildChannel;
-                if (guildChannel == null)
-                {
-                    LoggerUtil.LogWarning(
-                        "[DISCORD_BOT] Channel is not a guild channel: " + channelID
-                    );
-                    return false;
-                }
-
-                await guildChannel.DeleteAsync();
-                LoggerUtil.LogSuccess("[DISCORD_BOT] Deleted channel: " + channelID);
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Delete channel error: " + ex.Message);
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
                 return false;
-            }
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.DeleteChannel,
+                    new DiscordDeleteChannelRequest { ChannelId = channelID })
+                .ConfigureAwait(false);
+
+            return response.Success;
         }
 
-        /// <summary>
-        /// Assign role to a user
-        /// </summary>
+        public async Task<DiscordChannelInfo> GetChannelInfoAsync(
+            ulong channelId,
+            DiscordChannelKind expectedKind)
+        {
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
+                return null;
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.GetChannelInfo,
+                    new DiscordChannelQueryRequest
+                    {
+                        ChannelId = channelId,
+                        ExpectedKind = expectedKind,
+                    })
+                .ConfigureAwait(false);
+
+            return response.Payload as DiscordChannelInfo;
+        }
+
+        public async Task<ulong> FindChannelByNameAsync(string name, DiscordChannelKind expectedKind)
+        {
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
+                return 0;
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.FindChannelByName,
+                    new DiscordChannelQueryRequest
+                    {
+                        ChannelName = name,
+                        ExpectedKind = expectedKind,
+                    })
+                .ConfigureAwait(false);
+
+            return GetIdResult(response);
+        }
+
         public async Task<bool> AssignRoleAsync(ulong userID, ulong roleID)
         {
-            try
-            {
-                if (!_isReady)
-                    return false;
-
-                var guild = _client.GetGuild(_config.GuildID);
-                if (guild == null)
-                    return false;
-
-                var user = guild.GetUser(userID);
-                if (user == null)
-                    return false;
-
-                var role = guild.GetRole(roleID);
-                if (role == null)
-                    return false;
-
-                await user.AddRoleAsync(role);
-                LoggerUtil.LogSuccess(
-                    "[DISCORD_BOT] Assigned role " + roleID + " to user " + userID
-                );
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Assign role error: " + ex.Message);
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
                 return false;
-            }
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.AssignRole,
+                    new DiscordAssignRoleRequest
+                    {
+                        UserId = userID,
+                        RoleId = roleID,
+                    })
+                .ConfigureAwait(false);
+
+            return response.Success;
         }
 
-        /// <summary>
-        /// Remove role from a user
-        /// </summary>
-        public async Task<bool> RemoveRoleAsync(ulong userID, ulong roleID)
+        public async Task<bool> SyncRoleMembersAsync(
+            ulong roleId,
+            IEnumerable<ulong> desiredUserIds,
+            string roleName)
         {
-            try
-            {
-                if (!_isReady)
-                    return false;
-
-                var guild = _client.GetGuild(_config.GuildID);
-                if (guild == null)
-                    return false;
-
-                var user = guild.GetUser(userID);
-                if (user == null)
-                    return false;
-
-                var role = guild.GetRole(roleID);
-                if (role == null)
-                    return false;
-
-                await user.RemoveRoleAsync(role);
-                LoggerUtil.LogSuccess(
-                    "[DISCORD_BOT] Removed role " + roleID + " from user " + userID
-                );
-                return true;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Remove role error: " + ex.Message);
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
                 return false;
-            }
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.SyncRoleMembers,
+                    new DiscordSyncRoleMembersRequest
+                    {
+                        RoleId = roleId,
+                        RoleName = roleName,
+                        DesiredUserIds = desiredUserIds != null
+                            ? new List<ulong>(desiredUserIds)
+                            : new List<ulong>(),
+                    },
+                    60000)
+                .ConfigureAwait(false);
+
+            return response.Success;
         }
 
-        public bool IsReady => _isReady;
-        public bool IsConnected => _isConnected;
-
-        // ============================================================
-        // PRIVATE EVENT HANDLERS
-        // ============================================================
-
-        private async Task OnBotReady()
+        public async Task<ulong> GetOrCreateVerifiedRoleAsync()
         {
-            _isConnected = true;
-            _isReady = true;
-            LoggerUtil.LogSuccess("[DISCORD_BOT] Bot is ready and listening!");
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
+                return 0;
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.GetOrCreateVerifiedRole,
+                    null)
+                .ConfigureAwait(false);
+
+            return GetIdResult(response);
+        }
+
+        public async Task<bool> UpdateChannelNameAsync(ulong channelId, string newName)
+        {
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
+                return false;
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.UpdateChannelName,
+                    new DiscordUpdateChannelNameRequest
+                    {
+                        ChannelId = channelId,
+                        NewName = newName,
+                    })
+                .ConfigureAwait(false);
+
+            return response.Success;
+        }
+
+        public async Task<bool> UpdatePresenceAsync(string statusText)
+        {
+            if (!await EnsureStartedAsync().ConfigureAwait(false))
+                return false;
+
+            var response = await SendRequestAsync(
+                    DiscordIpcOperations.UpdatePresence,
+                    new DiscordUpdatePresenceRequest
+                    {
+                        StatusText = statusText,
+                    })
+                .ConfigureAwait(false);
+
+            return response.Success;
+        }
+
+        private async Task<bool> EnsureStartedAsync()
+        {
+            if (_pipeStream != null && _pipeStream.IsConnected)
+                return true;
+
+            return await StartAsync().ConfigureAwait(false);
+        }
+
+        private async Task<bool> InitializeOrUpdateAsync(string operation)
+        {
+            var response = await SendRequestAsync(operation, _config, 60000).ConfigureAwait(false);
+            ApplyConnectionState(response.Payload as DiscordConnectionState);
+
+            if (!response.Success && !string.IsNullOrWhiteSpace(response.Error))
+            {
+                LoggerUtil.LogError(
+                    "[DISCORD_IPC] " + operation + " failed: " + response.Error);
+            }
+
+            return response.Success;
+        }
+
+        private async Task<DiscordIpcEnvelope> SendRequestAsync(
+            string operation,
+            object payload,
+            int timeoutMs = 30000)
+        {
+            if (_pipeStream == null || !_pipeStream.IsConnected)
+            {
+                return CreateLocalFailure(operation, "Discord host pipe is not connected.");
+            }
+
+            var requestId = Guid.NewGuid().ToString("N");
+            var stopwatch = Stopwatch.StartNew();
+            var completionSource = new TaskCompletionSource<DiscordIpcEnvelope>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            _pendingRequests[requestId] = completionSource;
 
             try
             {
-                if (_client != null)
-                    await _client.SetStatusAsync(UserStatus.Online);
-
-                if (_client != null)
-                    await _client.SetGameAsync(
-                    _config.BotPrefix + "tds help",
-                    null,
-                    ActivityType.Listening
-                );
-
-                LoggerUtil.LogInfo(
-                    "[DISCORD_BOT] Presence set to online and listening for commands"
-                );
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogWarning(
-                    "[DISCORD_BOT] Failed to set presence: " + ex.Message
-                );
-            }
-
-            // NEW: Pre-load guild users so username/ID lookups work immediately
-            try
-            {
-                var guild = _client != null ? _client.GetGuild(_config.GuildID) : null;
-                if (guild != null)
+                await _writeLock.WaitAsync().ConfigureAwait(false);
+                try
                 {
-                    LoggerUtil.LogDebug(
-                        "[DISCORD_BOT] Downloading guild users to warm up cache..."
-                    );
-                    var _ = guild.DownloadUsersAsync();
+                    await DiscordIpcSerializer.WriteAsync(
+                            _pipeStream,
+                            new DiscordIpcEnvelope
+                            {
+                                Kind = DiscordIpcKinds.Request,
+                                RequestId = requestId,
+                                Operation = operation,
+                                Success = true,
+                                Payload = payload,
+                            },
+                            _pipeCancellation != null
+                                ? _pipeCancellation.Token
+                                : CancellationToken.None)
+                        .ConfigureAwait(false);
                 }
-                else
+                finally
+                {
+                    _writeLock.Release();
+                }
+
+                var completedTask = await Task.WhenAny(
+                        completionSource.Task,
+                        Task.Delay(timeoutMs))
+                    .ConfigureAwait(false);
+
+                if (completedTask != completionSource.Task)
+                {
+                    _pendingRequests.TryRemove(requestId, out _);
+                    LoggerUtil.LogWarning(
+                        "[DISCORD_IPC] " + operation + " timed out after "
+                        + stopwatch.ElapsedMilliseconds + "ms; pending="
+                        + _pendingRequests.Count);
+                    return CreateLocalFailure(operation, "Timed out waiting for Discord host response.");
+                }
+
+                var response = await completionSource.Task.ConfigureAwait(false);
+                if (stopwatch.ElapsedMilliseconds >= 2000)
                 {
                     LoggerUtil.LogWarning(
-                        "[DISCORD_BOT] Guild not found on Ready - user search may be limited"
-                    );
+                        "[DISCORD_IPC] " + operation + " response took "
+                        + stopwatch.ElapsedMilliseconds + "ms; pending="
+                        + _pendingRequests.Count);
+                }
+
+                return response;
+            }
+            catch (Exception ex)
+            {
+                _pendingRequests.TryRemove(requestId, out _);
+                return CreateLocalFailure(operation, ex.Message);
+            }
+        }
+
+        private async Task ReadLoopAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                while (!cancellationToken.IsCancellationRequested
+                       && _pipeStream != null
+                       && _pipeStream.IsConnected)
+                {
+                    var envelope = await DiscordIpcSerializer.ReadAsync(_pipeStream, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    if (envelope == null)
+                        break;
+
+                    if (string.Equals(envelope.Kind, DiscordIpcKinds.Response, StringComparison.Ordinal))
+                    {
+                        if (!string.IsNullOrWhiteSpace(envelope.RequestId)
+                            && _pendingRequests.TryRemove(envelope.RequestId, out var pending))
+                        {
+                            pending.TrySetResult(envelope);
+                        }
+
+                        continue;
+                    }
+
+                    if (string.Equals(envelope.Kind, DiscordIpcKinds.Event, StringComparison.Ordinal))
+                    {
+                        QueueEventDispatch(envelope);
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogError("[DISCORD_IPC] Pipe read loop failed: " + ex.Message);
+            }
+            finally
+            {
+                CompletePendingRequests("Discord host pipe closed.");
+                ApplyConnectionState(new DiscordConnectionState());
+            }
+        }
+
+        private void QueueEventDispatch(DiscordIpcEnvelope envelope)
+        {
+            lock (_eventDispatchLock)
+            {
+                _eventDispatchTask = _eventDispatchTask
+                    .ContinueWith(
+                        delegate { return HandleEventAsync(envelope); },
+                        CancellationToken.None,
+                        TaskContinuationOptions.None,
+                        TaskScheduler.Default)
+                    .Unwrap();
+            }
+        }
+
+        private async Task HandleEventAsync(DiscordIpcEnvelope envelope)
+        {
+            try
+            {
+                switch (envelope.Operation)
+                {
+                    case DiscordIpcEvents.MessageReceived:
+                        if (OnMessageReceivedEvent != null)
+                        {
+                            var message = envelope.Payload as DiscordIncomingMessage;
+                            if (message != null)
+                                await OnMessageReceivedEvent.Invoke(message).ConfigureAwait(false);
+                        }
+                        break;
+
+                    case DiscordIpcEvents.VerificationAttempt:
+                        var attempt = envelope.Payload as DiscordVerificationAttempt;
+                        if (attempt != null)
+                        {
+                            OnVerificationAttempt?.Invoke(
+                                attempt.VerificationCode,
+                                attempt.DiscordUserId,
+                                attempt.DiscordUsername);
+                        }
+                        break;
+
+                    case DiscordIpcEvents.ConnectionStateChanged:
+                        ApplyConnectionState(envelope.Payload as DiscordConnectionState);
+                        break;
                 }
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogWarning(
-                    "[DISCORD_BOT] Failed to download guild users on Ready: " + ex.Message
-                );
+                LoggerUtil.LogError("[DISCORD_IPC] Event dispatch failed: " + ex.Message);
             }
         }
 
-        /// Handle disconnection and attempt reconnection
-        private async Task OnBotDisconnected(Exception ex)
+        private void ApplyConnectionState(DiscordConnectionState state)
         {
-            _isConnected = false;
-            _isReady = false;
-            string exMsg = ex?.Message ?? "Unknown error";
-            LoggerUtil.LogWarning("[DISCORD_BOT] Bot disconnected: " + exMsg);
+            _connectionState = state ?? new DiscordConnectionState();
+            OnConnectionStateChanged?.Invoke(_connectionState);
+        }
 
-            // Auto-reconnect logic
-            int maxAttempts = 5;
-            int delayMs = 5000;
+        private async Task<bool> StopInternalAsync(bool requestShutdown)
+        {
+            try
+            {
+                if (requestShutdown && _pipeStream != null && _pipeStream.IsConnected)
+                {
+                    await SendRequestAsync(DiscordIpcOperations.Shutdown, null, 5000)
+                        .ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogWarning("[DISCORD_IPC] Graceful host shutdown failed: " + ex.Message);
+            }
 
-            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            try
+            {
+                if (_pipeCancellation != null)
+                {
+                    _pipeCancellation.Cancel();
+                    _pipeCancellation.Dispose();
+                    _pipeCancellation = null;
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                if (_pipeStream != null)
+                {
+                    _pipeStream.Dispose();
+                    _pipeStream = null;
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                if (_readerTask != null)
+                {
+                    await _readerTask.ConfigureAwait(false);
+                    _readerTask = null;
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                if (_hostProcess != null)
+                {
+                    if (!_hostProcess.HasExited)
+                    {
+                        if (!_hostProcess.WaitForExit(5000))
+                        {
+                            _hostProcess.Kill();
+                            _hostProcess.WaitForExit(5000);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogWarning("[DISCORD_IPC] Host process termination warning: " + ex.Message);
+            }
+            finally
+            {
+                CleanupProcess();
+            }
+
+            CompletePendingRequests("Discord host stopped.");
+            ApplyConnectionState(new DiscordConnectionState());
+            return true;
+        }
+
+        private void OnHostProcessExited(object sender, EventArgs e)
+        {
+            LoggerUtil.LogWarning("[DISCORD_IPC] Discord host process exited.");
+            CompletePendingRequests("Discord host process exited.");
+            ApplyConnectionState(new DiscordConnectionState());
+        }
+
+        private void OnHostOutputDataReceived(object sender, DataReceivedEventArgs e)
+        {
+            if (!string.IsNullOrWhiteSpace(e.Data))
+                LoggerUtil.LogInfo("[DISCORD_HOST] " + e.Data);
+        }
+
+        private void OnHostErrorDataReceived(object sender, DataReceivedEventArgs e)
+        {
+            if (!string.IsNullOrWhiteSpace(e.Data))
+                LoggerUtil.LogError("[DISCORD_HOST] " + e.Data);
+        }
+
+        private bool TryCreateHostProcessStartInfo(out ProcessStartInfo startInfo)
+        {
+            startInfo = null;
+
+            if (!TryResolveHostArtifacts(out var workingDirectory, out var executablePath, out var dllPath))
+                return false;
+
+            var commonArguments =
+                "--pipe " + Quote(_pipeName)
+                + " --parent-pid " + Process.GetCurrentProcess().Id
+                + " --plugin-dir " + Quote(
+                    TorchDiscordSync.Plugin.Config.MainConfig.GetPluginDirectory());
+
+            if (!string.IsNullOrWhiteSpace(executablePath))
+            {
+                startInfo = new ProcessStartInfo
+                {
+                    FileName = executablePath,
+                    Arguments = commonArguments,
+                    WorkingDirectory = workingDirectory,
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                };
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(dllPath))
+            {
+                startInfo = new ProcessStartInfo
+                {
+                    FileName = "dotnet",
+                    Arguments = Quote(dllPath) + " " + commonArguments,
+                    WorkingDirectory = workingDirectory,
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                };
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryResolveHostArtifacts(
+            out string workingDirectory,
+            out string executablePath,
+            out string dllPath)
+        {
+            workingDirectory = null;
+            executablePath = null;
+            dllPath = null;
+
+            string assemblyDirectory;
+            TryGetAssemblyDirectory(out assemblyDirectory);
+
+            var hostBaseDirectories = new List<string>();
+            if (!string.IsNullOrWhiteSpace(assemblyDirectory))
+                hostBaseDirectories.Add(assemblyDirectory);
+
+            var installedPluginDirectory = TryFindInstalledPluginDirectory();
+            if (!string.IsNullOrWhiteSpace(installedPluginDirectory)
+                && !ContainsPath(hostBaseDirectories, installedPluginDirectory))
+            {
+                hostBaseDirectories.Add(installedPluginDirectory);
+            }
+
+            foreach (var hostBaseDirectory in hostBaseDirectories)
+            {
+                var payloadDirectory = Path.Combine(hostBaseDirectory, "HostPayload");
+                try
+                {
+                    if (Directory.Exists(payloadDirectory))
+                    {
+                        var stagedDirectory = StageBundledHostArtifacts(payloadDirectory);
+                        if (TrySelectHostEntrypoint(
+                                stagedDirectory,
+                                out workingDirectory,
+                                out executablePath,
+                                out dllPath))
+                        {
+                            return true;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LoggerUtil.LogWarning(
+                        "[DISCORD_IPC] Failed to stage Discord host payload from "
+                        + payloadDirectory + ": " + ex.Message);
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(assemblyDirectory))
+                return false;
+
+            var candidateDirectories = new[]
+            {
+                Path.Combine(assemblyDirectory, "..", "..", "DiscordHost", "bin", "Debug", "net8.0"),
+                Path.Combine(assemblyDirectory, "..", "..", "DiscordHost", "bin", "Release", "net8.0"),
+            };
+
+            foreach (var candidate in candidateDirectories)
             {
                 try
                 {
-                    LoggerUtil.LogInfo(
-                        $"[DISCORD_BOT] Reconnection attempt {attempt}/{maxAttempts}..."
-                    );
-                    await Task.Delay(delayMs);
-
-                    if (_client != null && _client.ConnectionState != ConnectionState.Connected)
-                    {
-                        await _client.StartAsync();
-                        _isConnected = true;
-                        LoggerUtil.LogSuccess(
-                            "[DISCORD_BOT] Reconnection start requested; waiting for Ready event"
-                        );
-                        return;
-                    }
+                    var fullCandidate = Path.GetFullPath(candidate);
+                    if (TrySelectHostEntrypoint(
+                            fullCandidate,
+                            out workingDirectory,
+                            out executablePath,
+                            out dllPath))
+                        return true;
                 }
-                catch (Exception reconnectEx)
+                catch
                 {
-                    LoggerUtil.LogWarning(
-                        $"[DISCORD_BOT] Reconnection attempt {attempt} failed: {reconnectEx.Message}"
-                    );
                 }
             }
 
-            LoggerUtil.LogError("[DISCORD_BOT] Failed to reconnect after all attempts");
+            return false;
         }
 
-        /// <summary>
-        /// Main message handler - processes both commands and chat messages
-        /// </summary>
-        private async Task OnMessageReceived(SocketMessage message)
+        private static bool TryGetAssemblyDirectory(out string assemblyDirectory)
+        {
+            assemblyDirectory = null;
+
+            try
+            {
+                var location = Assembly.GetExecutingAssembly().Location;
+                if (!string.IsNullOrWhiteSpace(location))
+                {
+                    assemblyDirectory = Path.GetDirectoryName(location);
+                    if (!string.IsNullOrWhiteSpace(assemblyDirectory))
+                        return true;
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
+        }
+
+        private static string TryFindInstalledPluginDirectory()
         {
             try
             {
-                if (message.Author.IsBot)
-                    return;
-
-                LoggerUtil.LogDebug(
-                    "[DISCORD_BOT] Message received from "
-                        + message.Author.Username
-                        + " in channel: "
-                        + message.Channel.Name
-                );
-
-                // Check if this is a DM (direct message)
-                if (message.Channel is IDMChannel dmChannel)
-                {
-                    LoggerUtil.LogDebug("[DISCORD_BOT] DM message detected - processing command");
-
-                    // Command handling for DM messages
-                    if (!message.Content.StartsWith(_config.BotPrefix))
-                    {
-                        LoggerUtil.LogDebug(
-                            "[DISCORD_BOT] DM message does not start with bot prefix '"
-                                + _config.BotPrefix
-                                + "'"
-                        );
-                        return;
-                    }
-
-                    var args = message
-                        .Content.Substring(_config.BotPrefix.Length)
-                        .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-
-                    if (args.Length == 0)
-                        return;
-
-                    var command = args[0].ToLower();
-                    LoggerUtil.LogDebug("[DISCORD_BOT] DM command: " + command);
-
-                    if (command == "verify")
-                    {
-                        await HandleVerifyCommand(message, args);
-                    }
-                    else if (command == "help")
-                    {
-                        await HandleHelpCommand(message);
-                    }
-                    return; // Don't forward DM to chat sync
-                }
-
-                if (string.IsNullOrWhiteSpace(message.Content))
-                {
-                    LoggerUtil.LogWarning(
-                        "[DISCORD_BOT] Received a guild message with no content. Enable the Message Content intent for this bot in the Discord developer portal if prefix commands should work in guild channels."
-                    );
-                    return;
-                }
-
-                // If not DM, forward to chat sync (guild messages)
-                if (OnMessageReceivedEvent != null)
-                {
-                    await OnMessageReceivedEvent.Invoke(message);
-                }
-
-                // Command handling for guild messages only if message starts with prefix
-                if (!message.Content.StartsWith(_config.BotPrefix))
-                    return;
-
-                var guildArgs = message
-                    .Content.Substring(_config.BotPrefix.Length)
-                    .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-
-                if (guildArgs.Length == 0)
-                    return;
-
-                var guildCommand = guildArgs[0].ToLower();
-
-                if (guildCommand == "verify")
-                {
-                    await HandleVerifyCommand(message, guildArgs);
-                }
-                else if (guildCommand == "help")
-                {
-                    await HandleHelpCommand(message);
-                }
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Message handler error: " + ex.Message);
-            }
-        }
-
-        private Task OnClientLog(LogMessage message)
-        {
-            string text = "[DISCORD_BOT] [" + message.Severity + "] " + message.Message;
-            if (message.Exception != null)
-                text += " | " + message.Exception.Message;
-
-            switch (message.Severity)
-            {
-                case LogSeverity.Critical:
-                case LogSeverity.Error:
-                    LoggerUtil.LogError(text);
-                    break;
-                case LogSeverity.Warning:
-                    LoggerUtil.LogWarning(text);
-                    break;
-                case LogSeverity.Info:
-                    LoggerUtil.LogInfo(text);
-                    break;
-                default:
-                    LoggerUtil.LogDebug(text);
-                    break;
-            }
-
-            return Task.CompletedTask;
-        }
-
-        private async Task HandleVerifyCommand(SocketMessage message, string[] args)
-        {
-            try
-            {
-                LoggerUtil.LogDebug(
-                    "[DISCORD_BOT] Handling verify command for user: " + message.Author.Username
-                );
-                if (args.Length < 2)
-                {
-                    await message.Author.SendMessageAsync(
-                        "❌ Usage:\n"
-                            + "  !verify CODE\n"
-                            + "  !verify key:CODE\n"
-                            + "  !verify username:YourGameName\n"
-                            + "  !verify steamid:YOUR_STEAM_ID\n\n"
-                            + "Examples:\n"
-                            + "  !verify ABC12345\n"
-                            + "  !verify key:ABC12345\n"
-                            + "  !verify username:mamba\n"
-                            + "  !verify steamid:76561198000000000"
-                    );
-                    return;
-                }
-
-                string rawArg = args[1].Trim();
-
-                // NEW: !verify key:CODE → submit verification code
-                if (rawArg.StartsWith("key:", StringComparison.OrdinalIgnoreCase))
-                {
-                    string keyCode = rawArg.Substring("key:".Length).Trim();
-                    if (string.IsNullOrEmpty(keyCode))
-                    {
-                        await message.Author.SendMessageAsync(
-                            "❌ Invalid format. Usage: !verify key:CODE"
-                        );
-                        return;
-                    }
-
-                    string normalizedCode = keyCode.ToUpper();
-                    LoggerUtil.LogDebug(
-                        "[DISCORD_BOT] VERIFY key: flow with code: " + normalizedCode
-                    );
-
-                    OnVerificationAttempt?.Invoke(
-                        normalizedCode,
-                        message.Author.Id,
-                        message.Author.Username
-                    );
-
-                    var embedKey = new EmbedBuilder()
-                        .WithColor(Color.Blue)
-                        .WithTitle("⏳ Verifying...")
-                        .WithDescription("Your verification code is being processed.")
-                        .WithFooter("You will receive a confirmation shortly")
-                        .Build();
-
-                    await message.Author.SendMessageAsync(embed: embedKey);
-                    return;
-                }
-
-                // NEW: !verify username:mamba → send instructions how to start verification from game
-                if (rawArg.StartsWith("username:", StringComparison.OrdinalIgnoreCase))
-                {
-                    string targetUser = rawArg.Substring("username:".Length).Trim();
-                    if (string.IsNullOrEmpty(targetUser))
-                    {
-                        await message.Author.SendMessageAsync(
-                            "❌ Invalid format. Usage: !verify username:YourGameName"
-                        );
-                        return;
-                    }
-
-                    LoggerUtil.LogDebug(
-                        "[DISCORD_BOT] VERIFY username: helper requested for: " + targetUser
-                    );
-
-                    var embedUser = new EmbedBuilder()
-                        .WithColor(Color.Green)
-                        .WithTitle("🛈 How to start verification")
-                        .WithDescription(
-                            "To link your Discord with your Space Engineers account, you must run a command **in-game**."
-                        )
-                        .AddField(
-                            "Step 1 - In Game",
-                            "Open chat and type:\n```/tds verify @" + targetUser + "```",
-                            false
-                        )
-                        .AddField(
-                            "Step 2 - Discord DM",
-                            "You will receive a DM from this bot with a **verification code**.\n"
-                                + "Follow the instructions in that DM to complete verification.",
-                            false
-                        )
-                        .WithFooter("This message does NOT verify you, it only shows instructions.")
-                        .Build();
-
-                    await message.Author.SendMessageAsync(embed: embedUser);
-                    return;
-                }
-
-                // NEW: !verify steamid:123... → send instructions with SteamID hint
-                if (rawArg.StartsWith("steamid:", StringComparison.OrdinalIgnoreCase))
-                {
-                    string targetSteam = rawArg.Substring("steamid:".Length).Trim();
-                    if (string.IsNullOrEmpty(targetSteam))
-                    {
-                        await message.Author.SendMessageAsync(
-                            "❌ Invalid format. Usage: !verify steamid:YOUR_STEAM_ID"
-                        );
-                        return;
-                    }
-
-                    LoggerUtil.LogDebug(
-                        "[DISCORD_BOT] VERIFY steamid: helper requested for: " + targetSteam
-                    );
-
-                    var embedSteam = new EmbedBuilder()
-                        .WithColor(Color.Green)
-                        .WithTitle("🛈 How to start verification")
-                        .WithDescription(
-                            "To link your Discord with your Space Engineers account, you must run a command **in-game**."
-                        )
-                        .AddField(
-                            "Step 1 - In Game",
-                            "Open chat and type (replace with your Discord name or ID):\n"
-                                + "```/tds verify @YourDiscordName```\n"
-                                + "or\n"
-                                + "```/tds verify YourDiscordID```",
-                            false
-                        )
-                        .AddField(
-                            "Step 2 - Discord DM",
-                            "You will receive a DM from this bot with a **verification code**.\n"
-                                + "Follow the instructions in that DM to complete verification.",
-                            false
-                        )
-                        .AddField(
-                            "Info",
-                            "SteamID you sent: `" + targetSteam + "` (for admin reference only).",
-                            false
-                        )
-                        .WithFooter("This message does NOT verify you, it only shows instructions.")
-                        .Build();
-
-                    await message.Author.SendMessageAsync(embed: embedSteam);
-                    return;
-                }
-
-                // BACKWARD COMPATIBLE: old syntax !verify CODE
-                string code = rawArg.ToUpper();
-                LoggerUtil.LogDebug("[DISCORD_BOT] VERIFY legacy flow with code: " + code);
-
-                OnVerificationAttempt?.Invoke(code, message.Author.Id, message.Author.Username);
-
-                var embed = new EmbedBuilder()
-                    .WithColor(Color.Blue)
-                    .WithTitle("⏳ Verifying...")
-                    .WithDescription("Your verification code is being processed.")
-                    .WithFooter("You will receive a confirmation shortly")
-                    .Build();
-
-                await message.Author.SendMessageAsync(embed: embed);
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Verify command error: " + ex.Message);
-            }
-        }
-
-        private async Task HandleHelpCommand(SocketMessage message)
-        {
-            try
-            {
-                var embed = new EmbedBuilder()
-                    .WithColor(Color.Blue)
-                    .WithTitle("🤖 mamba.TorchDiscordSync.Plugin Bot Help")
-                    .AddField(
-                        "Verification",
-                        _config.BotPrefix + "verify CODE - Verify your Space Engineers account",
-                        false
-                    )
-                    .AddField("Help", _config.BotPrefix + "help - Show this message", false)
-                    .WithFooter("Bot will respond via DM")
-                    .Build();
-
-                await message.Author.SendMessageAsync(embed: embed);
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Help command error: " + ex.Message);
-            }
-        }
-
-        /// <summary>
-        /// Welcome new users with a DM and instructions on how to verify
-        /// </summary>
-        /// <param name="user"></param>
-        /// <returns></returns>
-        private async Task OnUserJoined(SocketGuildUser user)
-        {
-            try
-            {
-                LoggerUtil.LogInfo("[DISCORD_BOT] New user joined: " + user.Username);
-
-                var embed = new EmbedBuilder()
-                    .WithColor(Color.Gold)
-                    .WithTitle("👋 Welcome!")
-                    .WithDescription("Welcome to the Space Engineers community!")
-                    .AddField(
-                        "Link Your Account",
-                        "Use `/tds verify @YourDiscordName` in-game",
-                        false
-                    )
-                    .AddField("Need Help?", "Type `!help` for commands", false)
-                    .Build();
-
-                await user.SendMessageAsync(embed: embed);
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] User joined handler error: " + ex.Message);
-            }
-        }
-
-        /// <summary>
-        /// Find user by username or nickname in the guild
-        /// </summary>
-        private SocketUser FindUserByUsername(string searchTerm)
-        {
-            try
-            {
-                var guild = _client.GetGuild(_config.GuildID);
-                if (guild == null)
-                {
-                    LoggerUtil.LogError("[DISCORD_BOT] Guild not found");
-                    return null;
-                }
-
-                if (string.IsNullOrWhiteSpace(searchTerm))
-                {
-                    LoggerUtil.LogWarning("[DISCORD_BOT] Empty search term");
-                    return null;
-                }
-
-                // Normalize search term - remove @ if present
-                string search = searchTerm.ToLower().Replace("@", "").Trim();
-                LoggerUtil.LogDebug(
-                    "[DISCORD_BOT] Searching for Discord user: '"
-                        + search
-                        + "' (Guild users cached: "
-                        + guild.Users.Count
-                        + ", Members: "
-                        + guild.MemberCount
-                        + ")"
-                );
-
-                // FIRST: Try Discord ID match DIRECTLY (if search term is numeric)
-                if (ulong.TryParse(search, out ulong userId))
-                {
-                    LoggerUtil.LogDebug(
-                        "[DISCORD_BOT] Search term is numeric, trying Discord ID: " + userId
-                    );
-                    var userById = guild.GetUser(userId);
-                    if (userById != null)
-                    {
-                        LoggerUtil.LogSuccess("[DISCORD_BOT] Found user by Discord ID: " + userId);
-                        return userById;
-                    }
-                    else
-                    {
-                        LoggerUtil.LogWarning(
-                            "[DISCORD_BOT] User not found by ID: " + userId + " - not in guild"
-                        );
-                        return null;
-                    }
-                }
-
-                // SECOND: Try exact and partial matches on username/nickname
-                foreach (var user in guild.Users)
-                {
-                    // Skip bots only for username/nickname matching
-                    if (user.IsBot)
-                    {
-                        LoggerUtil.LogDebug("[DISCORD_BOT] Skipping bot account: " + user.Username);
-                        continue;
-                    }
-
-                    // Method 1: Exact match on Username (Discord username)
-                    if (!string.IsNullOrEmpty(user.Username))
-                    {
-                        if (user.Username.Equals(search, StringComparison.OrdinalIgnoreCase))
-                        {
-                            LoggerUtil.LogSuccess(
-                                "[DISCORD_BOT] Found user by Username: " + user.Username
-                            );
-                            return user;
-                        }
-                    }
-
-                    // Method 2: Exact match on Nickname (server nickname)
-                    if (!string.IsNullOrEmpty(user.Nickname))
-                    {
-                        if (user.Nickname.Equals(search, StringComparison.OrdinalIgnoreCase))
-                        {
-                            LoggerUtil.LogSuccess(
-                                "[DISCORD_BOT] Found user by Nickname: " + user.Nickname
-                            );
-                            return user;
-                        }
-                    }
-                }
-
-                // Try partial matches if no exact match found
-                LoggerUtil.LogDebug(
-                    "[DISCORD_BOT] No exact match found, trying partial matches..."
-                );
-                foreach (var user in guild.Users)
-                {
-                    // Skip bots only for username/nickname matching
-                    if (user.IsBot)
-                    {
-                        continue;
-                    }
-
-                    // Method 3: Partial match on Username
-                    if (!string.IsNullOrEmpty(user.Username))
-                    {
-                        if (user.Username.ToLower().Contains(search))
-                        {
-                            LoggerUtil.LogSuccess(
-                                "[DISCORD_BOT] Found user by partial Username: " + user.Username
-                            );
-                            return user;
-                        }
-                    }
-                }
-
-                LoggerUtil.LogWarning("[DISCORD_BOT] User NOT found: '" + searchTerm + "'");
-                return null;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Find user error: " + ex.Message);
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Get role by ID (for checking if role already exists)
-        /// </summary>
-        public IRole GetRoleAsync(ulong roleId)
-        {
-            try
-            {
-                if (!_isReady)
+                var torchBaseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+                if (string.IsNullOrWhiteSpace(torchBaseDirectory))
                     return null;
 
-                var guild = _client.GetGuild(_config.GuildID);
-                if (guild == null)
+                var pluginsDirectory = Path.Combine(torchBaseDirectory, "Plugins");
+                if (!Directory.Exists(pluginsDirectory))
                     return null;
 
-                return guild.GetRole(roleId);
+                foreach (var pluginDirectory in Directory.GetDirectories(pluginsDirectory))
+                {
+                    if (IsCurrentPluginDirectory(pluginDirectory))
+                        return pluginDirectory;
+                }
             }
-            catch (Exception ex)
+            catch
             {
-                LoggerUtil.LogError("[DISCORD_BOT] Get role error: " + ex.Message);
-                return null;
             }
+
+            return null;
         }
 
-        /// <summary>
-        /// Get channel by ID (for checking if channel already exists)
-        /// </summary>
-        public IChannel GetChannelAsync(ulong channelId)
+        private static bool IsCurrentPluginDirectory(string pluginDirectory)
         {
-            try
+            if (string.IsNullOrWhiteSpace(pluginDirectory) || !Directory.Exists(pluginDirectory))
+                return false;
+
+            var payloadDirectory = Path.Combine(pluginDirectory, "HostPayload");
+            if (Directory.Exists(payloadDirectory)
+                && (File.Exists(Path.Combine(payloadDirectory, HostExecutableFileName))
+                    || File.Exists(Path.Combine(payloadDirectory, HostManagedDllFileName))
+                    || File.Exists(Path.Combine(payloadDirectory, HostAppHostFileName))))
             {
-                if (!_isReady)
-                    return null;
-
-                var guild = _client.GetGuild(_config.GuildID);
-                if (guild == null)
-                    return null;
-
-                return guild.GetChannel(channelId);
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD_BOT] Get channel error: " + ex.Message);
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Check if a role already exists by ID
-        /// Used to avoid recreating roles when they already exist on Discord
-        /// Returns null if role doesn't exist or bot is not ready
-        /// </summary>
-        public IRole GetExistingRole(ulong roleId)
-        {
-            try
-            {
-                // Don't proceed if bot is not ready
-                if (!_isReady)
-                {
-                    LoggerUtil.LogDebug("[DISCORD_BOT] Bot not ready to check roles");
-                    return null;
-                }
-
-                // Get the guild (Discord server)
-                var guild = _client.GetGuild(_config.GuildID);
-                if (guild == null)
-                {
-                    LoggerUtil.LogWarning("[DISCORD_BOT] Guild not found while checking for role");
-                    return null;
-                }
-
-                // Try to get the role by ID
-                var role = guild.GetRole(roleId);
-
-                if (role != null)
-                {
-                    LoggerUtil.LogDebug(
-                        "[DISCORD_BOT] Found existing role: " + role.Name + " (ID: " + roleId + ")"
-                    );
-                }
-                else
-                {
-                    LoggerUtil.LogDebug("[DISCORD_BOT] Role not found (ID: " + roleId + ")");
-                }
-
-                return role;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogWarning(
-                    "[DISCORD_BOT] Error checking for existing role: " + ex.Message
-                );
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Check if a channel already exists by ID
-        /// Used to avoid recreating channels when they already exist on Discord
-        /// Returns null if channel doesn't exist or bot is not ready
-        /// </summary>
-        public IChannel GetExistingChannel(ulong channelId)
-        {
-            try
-            {
-                // Don't proceed if bot is not ready
-                if (!_isReady)
-                {
-                    LoggerUtil.LogDebug("[DISCORD_BOT] Bot not ready to check channels");
-                    return null;
-                }
-
-                // Get the guild (Discord server)
-                var guild = _client.GetGuild(_config.GuildID);
-                if (guild == null)
-                {
-                    LoggerUtil.LogWarning(
-                        "[DISCORD_BOT] Guild not found while checking for channel"
-                    );
-                    return null;
-                }
-
-                // Try to get the channel by ID
-                var channel = guild.GetChannel(channelId);
-
-                if (channel != null)
-                {
-                    LoggerUtil.LogDebug(
-                        "[DISCORD_BOT] Found existing channel: "
-                            + channel.Name
-                            + " (ID: "
-                            + channelId
-                            + ")"
-                    );
-                }
-                else
-                {
-                    LoggerUtil.LogDebug("[DISCORD_BOT] Channel not found (ID: " + channelId + ")");
-                }
-
-                return channel;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogWarning(
-                    "[DISCORD_BOT] Error checking for existing channel: " + ex.Message
-                );
-                return null;
-            }
-        }
-
-        // ============================================================
-        // NEW: VERIFIED ROLE MANAGEMENT
-        // ============================================================
-
-        /// <summary>
-        /// Get or create the "Verified" role on the Discord server
-        /// Returns the role ID or 0 if failed
-        /// </summary>
-        public async Task<ulong> GetOrCreateVerifiedRoleAsync()
-        {
-            try
-            {
-                if (!_isReady)
-                    return 0;
-
-                var guild = _client.GetGuild(_config.GuildID);
-                if (guild == null)
-                    return 0;
-
-                var existingRole = guild.Roles.FirstOrDefault(r => r.Name == "Verified");
-                if (existingRole != null)
-                    return existingRole.Id;
-
-                var newRole = await guild.CreateRoleAsync(
-                    "Verified",
-                    color: new Color(0, 176, 240),
-                    isHoisted: false,
-                    isMentionable: false
-                );
-                LoggerUtil.LogSuccess($"[DISCORD_BOT] Created Verified role");
-                return newRole.Id;
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError($"[DISCORD_BOT] Create role error: {ex.Message}");
-                return 0;
-            }
-        }
-
-        /// <summary>
-        /// Assign the Verified role to a Discord user
-        /// </summary>
-        public async Task<bool> AssignVerifiedRoleAsync(IUser user, ulong roleId)
-        {
-            try
-            {
-                if (!_isReady || roleId == 0)
-                    return false;
-
-                var guild = _client.GetGuild(_config.GuildID);
-                var role = guild.GetRole(roleId);
-                var guildUser = guild.GetUser(user.Id);
-
-                if (guildUser == null || role == null)
-                    return false;
-
-                await guildUser.AddRoleAsync(role);
-                LoggerUtil.LogSuccess($"[DISCORD_BOT] Assigned Verified role");
                 return true;
             }
-            catch (Exception ex)
+
+            var manifestPath = Path.Combine(pluginDirectory, "manifest.xml");
+            if (!File.Exists(manifestPath))
+                return false;
+
+            try
             {
-                LoggerUtil.LogError($"[DISCORD_BOT] Assign role error: {ex.Message}");
+                var document = new XmlDocument();
+                document.Load(manifestPath);
+
+                var guidNode = document.SelectSingleNode("/PluginManifest/Guid");
+                return guidNode != null
+                       && string.Equals(
+                           guidNode.InnerText != null ? guidNode.InnerText.Trim() : string.Empty,
+                           PluginManifestGuid,
+                           StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
                 return false;
             }
         }
 
-        /// <summary>
-        /// Assign a faction role to a Discord user
-        /// </summary>
-        public async Task<bool> AssignFactionRoleAsync(IUser user, string factionTag)
+        private static bool ContainsPath(IEnumerable<string> paths, string candidatePath)
         {
-            try
+            foreach (var existingPath in paths)
             {
-                if (!_isReady)
-                    return false;
+                if (string.Equals(existingPath, candidatePath, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
 
-                var guild = _client.GetGuild(_config.GuildID);
-                var role = guild.Roles.FirstOrDefault(r => r.Name == factionTag);
-                var guildUser = guild.GetUser(user.Id);
+            return false;
+        }
 
-                if (guildUser == null || role == null)
-                    return false;
+        private static string StageBundledHostArtifacts(string payloadDirectory)
+        {
+            // Torch loads plugin assemblies from the plugin install folder. Stage the
+            // external .NET host into the writable instance data area before launching it.
+            var stagedDirectory = Path.Combine(
+                TorchDiscordSync.Plugin.Config.MainConfig.GetPluginDirectory(),
+                "runtime",
+                "DiscordHost");
+            Directory.CreateDirectory(stagedDirectory);
 
-                await guildUser.AddRoleAsync(role);
-                LoggerUtil.LogSuccess($"[DISCORD_BOT] Assigned faction role");
+            foreach (var sourcePath in Directory.GetFiles(
+                         payloadDirectory,
+                         "*",
+                         SearchOption.AllDirectories))
+            {
+                var relativePath = sourcePath.Substring(payloadDirectory.Length)
+                    .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                var targetRelativePath = relativePath.EndsWith(".payload", StringComparison.OrdinalIgnoreCase)
+                    ? relativePath.Substring(0, relativePath.Length - ".payload".Length)
+                    : relativePath;
+                var destinationPath = Path.Combine(stagedDirectory, targetRelativePath);
+                var destinationDirectory = Path.GetDirectoryName(destinationPath);
+
+                if (!string.IsNullOrWhiteSpace(destinationDirectory))
+                    Directory.CreateDirectory(destinationDirectory);
+
+                if (ShouldCopyFile(sourcePath, destinationPath, targetRelativePath))
+                {
+                    File.Copy(sourcePath, destinationPath, true);
+                    File.SetLastWriteTimeUtc(destinationPath, File.GetLastWriteTimeUtc(sourcePath));
+                }
+            }
+
+            return stagedDirectory;
+        }
+
+        private static bool TrySelectHostEntrypoint(
+            string candidateDirectory,
+            out string workingDirectory,
+            out string executablePath,
+            out string dllPath)
+        {
+            workingDirectory = null;
+            executablePath = null;
+            dllPath = null;
+
+            if (string.IsNullOrWhiteSpace(candidateDirectory) || !Directory.Exists(candidateDirectory))
+                return false;
+
+            var windowsExe = Path.Combine(candidateDirectory, HostExecutableFileName);
+            var appHost = Path.Combine(candidateDirectory, HostAppHostFileName);
+            var managedDll = Path.Combine(candidateDirectory, HostManagedDllFileName);
+
+            if (File.Exists(windowsExe))
+            {
+                workingDirectory = candidateDirectory;
+                executablePath = windowsExe;
                 return true;
             }
-            catch (Exception ex)
+
+            if (File.Exists(appHost))
             {
-                LoggerUtil.LogError($"[DISCORD_BOT] Faction role error: {ex.Message}");
+                workingDirectory = candidateDirectory;
+                executablePath = appHost;
+                return true;
+            }
+
+            if (File.Exists(managedDll))
+            {
+                workingDirectory = candidateDirectory;
+                dllPath = managedDll;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool ShouldCopyFile(
+            string sourcePath,
+            string destinationPath,
+            string targetRelativePath)
+        {
+            if (IsHostEntrypointFile(targetRelativePath))
+                return true;
+
+            if (!File.Exists(destinationPath))
+                return true;
+
+            var sourceInfo = new FileInfo(sourcePath);
+            var destinationInfo = new FileInfo(destinationPath);
+
+            return sourceInfo.Length != destinationInfo.Length
+                   || sourceInfo.LastWriteTimeUtc != destinationInfo.LastWriteTimeUtc;
+        }
+
+        private static bool IsHostEntrypointFile(string relativePath)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath))
                 return false;
+
+            var fileName = Path.GetFileName(relativePath);
+            return string.Equals(fileName, HostExecutableFileName, StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(fileName, HostAppHostFileName, StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(fileName, HostManagedDllFileName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void CleanupProcess()
+        {
+            if (_hostProcess == null)
+                return;
+
+            try
+            {
+                _hostProcess.OutputDataReceived -= OnHostOutputDataReceived;
+                _hostProcess.ErrorDataReceived -= OnHostErrorDataReceived;
+                _hostProcess.Exited -= OnHostProcessExited;
+                _hostProcess.Dispose();
+            }
+            catch
+            {
+            }
+            finally
+            {
+                _hostProcess = null;
             }
         }
 
-        // ============================================================
-        // PUBLIC EVENTS
-        // ============================================================
+        private void CompletePendingRequests(string error)
+        {
+            foreach (var pending in _pendingRequests)
+            {
+                if (_pendingRequests.TryRemove(pending.Key, out var completion))
+                {
+                    completion.TrySetResult(new DiscordIpcEnvelope
+                    {
+                        Kind = DiscordIpcKinds.Response,
+                        Operation = "PendingRequestAborted",
+                        Success = false,
+                        Error = error,
+                    });
+                }
+            }
+        }
 
-        /// <summary>
-        /// Event for verification attempts (triggered by !verify command)
-        /// </summary>
-        public event Action<string, ulong, string> OnVerificationAttempt;
+        private static DiscordIpcEnvelope CreateLocalFailure(string operation, string error)
+        {
+            return new DiscordIpcEnvelope
+            {
+                Kind = DiscordIpcKinds.Response,
+                Operation = operation,
+                Success = false,
+                Error = error,
+            };
+        }
+
+        private static ulong GetIdResult(DiscordIpcEnvelope response)
+        {
+            var result = response.Payload as DiscordIdResult;
+            return result != null ? result.Value : 0;
+        }
+
+        private static string Quote(string value)
+        {
+            return "\"" + (value ?? string.Empty).Replace("\"", "\\\"") + "\"";
+        }
     }
 }

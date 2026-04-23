@@ -1,13 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Models;
-using mamba.TorchDiscordSync.Plugin.Services;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Core;
+using TorchDiscordSync.Plugin.Models;
+using TorchDiscordSync.Plugin.Services;
+using TorchDiscordSync.Plugin.Utils;
 using Torch.API.Managers;
 
-namespace mamba.TorchDiscordSync.Plugin.Handlers
+namespace TorchDiscordSync.Plugin.Handlers
 {
     /// <summary>
     /// Handles chat relay between the game and Discord and keeps a thin
@@ -20,19 +21,22 @@ namespace mamba.TorchDiscordSync.Plugin.Handlers
         private readonly DatabaseService _db;
         private readonly PlayerTrackingService _playerTracking;
         private readonly TdsCommandService _tdsCommands;
+        private readonly SyncOrchestrator _orchestrator;
 
         public CommandProcessor(
             MainConfig config,
             DatabaseService db,
             ChatSyncService chatSync,
             PlayerTrackingService playerTracking,
-            TdsCommandService tdsCommands)
+            TdsCommandService tdsCommands,
+            SyncOrchestrator orchestrator = null)
         {
             _config = config;
             _db = db;
             _chatSync = chatSync;
             _playerTracking = playerTracking;
             _tdsCommands = tdsCommands;
+            _orchestrator = orchestrator;
         }
 
         public void HandleChatMessage(TorchChatMessage msg, ref bool consumed)
@@ -45,6 +49,8 @@ namespace mamba.TorchDiscordSync.Plugin.Handlers
                 string channelName = msg.Channel.ToString() ?? "Unknown";
                 LoggerUtil.LogDebug(
                     $"[CHAT] Channel=\"{channelName}\" Author=\"{msg.Author}\" SteamId={msg.AuthorSteamId} Message=\"{msg.Message}\"");
+
+                ProcessImmediateChatSignals(msg, channelName);
 
                 if (msg.Message.StartsWith("/tds", StringComparison.OrdinalIgnoreCase))
                 {
@@ -61,7 +67,8 @@ namespace mamba.TorchDiscordSync.Plugin.Handlers
                     return;
                 }
 
-                if (msg.Author == "TDS" || msg.Author == "Discord" || msg.Author == "Server")
+                if (IsPluginRelayAuthor(msg.Author)
+                    || string.Equals(msg.Author, "Server", StringComparison.OrdinalIgnoreCase))
                     return;
 
                 if (channelName.StartsWith("Private", StringComparison.OrdinalIgnoreCase))
@@ -94,6 +101,87 @@ namespace mamba.TorchDiscordSync.Plugin.Handlers
             {
                 LoggerUtil.LogError("[CHAT] Error processing message: " + ex.Message);
             }
+        }
+
+        private void ProcessImmediateChatSignals(TorchChatMessage msg, string channelName)
+        {
+            if (string.IsNullOrWhiteSpace(msg.Message))
+                return;
+
+            if (!IsSystemChatMessage(msg, channelName))
+                return;
+
+            _playerTracking?.ProcessSystemChatMessage(msg.Message);
+
+            if (ShouldTriggerFactionSyncFromChat(msg.Message))
+            {
+                string reason = "system chat: " + TruncateForLog(msg.Message, 120);
+                LoggerUtil.LogInfo("[SYNC] Immediate faction sync requested from chat event");
+                _ = _orchestrator.RequestFactionSyncFromChatAsync(reason);
+            }
+        }
+
+        private bool IsSystemChatMessage(TorchChatMessage msg, string channelName)
+        {
+            if (IsPluginRelayAuthor(msg.Author))
+                return false;
+
+            return string.Equals(msg.Author, "Server", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(msg.Author, "System", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(msg.Author, "Console", StringComparison.OrdinalIgnoreCase)
+                   || channelName.StartsWith("System", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool ShouldTriggerFactionSyncFromChat(string message)
+        {
+            if (_orchestrator == null || _config?.Faction == null || !_config.Faction.Enabled)
+                return false;
+
+            if (string.IsNullOrWhiteSpace(message))
+                return false;
+
+            if (message.IndexOf("faction", StringComparison.OrdinalIgnoreCase) < 0)
+                return false;
+
+            return ContainsAny(
+                message,
+                "created",
+                "joined",
+                "left",
+                "accepted",
+                "kicked",
+                "promoted",
+                "demoted",
+                "disband",
+                "member",
+                "request",
+                "peace",
+                "war");
+        }
+
+        private static bool ContainsAny(string text, params string[] needles)
+        {
+            foreach (var needle in needles)
+            {
+                if (text.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsPluginRelayAuthor(string author)
+        {
+            return string.Equals(author, "TDS", StringComparison.OrdinalIgnoreCase)
+                   || string.Equals(author, "Discord", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string TruncateForLog(string text, int maxLength)
+        {
+            if (string.IsNullOrEmpty(text) || text.Length <= maxLength)
+                return text;
+
+            return text.Substring(0, maxLength - 3) + "...";
         }
 
         public void HandleLegacyChatCommand(string command, long playerSteamId, string playerName)

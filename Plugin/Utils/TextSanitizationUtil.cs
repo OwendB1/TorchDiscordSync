@@ -3,7 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 
-namespace mamba.TorchDiscordSync.Plugin.Utils
+namespace TorchDiscordSync.Plugin.Utils
 {
     /// <summary>
     /// Utility for sanitizing text (player names, messages, etc.)

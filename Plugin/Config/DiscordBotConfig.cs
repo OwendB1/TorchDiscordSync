@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Xml.Serialization;
 
-namespace mamba.TorchDiscordSync.Plugin.Config
+namespace TorchDiscordSync.Plugin.Config
 {
     public class DiscordBotConfig
     {

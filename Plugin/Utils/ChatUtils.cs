@@ -1,13 +1,13 @@
 // Plugin/Utils/ChatUtils.cs
 using System;
 using System.Collections.Generic;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Services;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Services;
 using Sandbox.Game;
 using Sandbox.ModAPI;
 using VRage.Game.ModAPI;
 
-namespace mamba.TorchDiscordSync.Plugin.Utils
+namespace TorchDiscordSync.Plugin.Utils
 {
     /// <summary>
     /// Shared helpers for server chat output and chat relay filtering.

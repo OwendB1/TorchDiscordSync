@@ -2,10 +2,10 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using mamba.TorchDiscordSync.Plugin.Models;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Models;
+using TorchDiscordSync.Plugin.Utils;
 
-namespace mamba.TorchDiscordSync.Plugin.Services
+namespace TorchDiscordSync.Plugin.Services
 {
     public class VerificationService
     {

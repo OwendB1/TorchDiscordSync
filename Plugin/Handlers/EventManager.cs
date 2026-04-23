@@ -1,14 +1,14 @@
 // Plugin/Handlers/EventManager.cs
 using System;
 using System.Threading.Tasks;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Services;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Services;
+using TorchDiscordSync.Plugin.Utils;
 using Sandbox.Game.Entities.Character.Components; // MyDamageInformation
 using Sandbox.ModAPI; // MyAPIGateway
 using VRage.Game.ModAPI; // Za dodatne API pozive
 
-namespace mamba.TorchDiscordSync.Plugin.Handlers
+namespace TorchDiscordSync.Plugin.Handlers
 {
     public class EventManager
     {

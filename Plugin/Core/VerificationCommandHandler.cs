@@ -1,34 +1,31 @@
 // Plugin/Core/VerificationCommandHandler.cs
 using System;
 using System.Threading.Tasks;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Models;
-using mamba.TorchDiscordSync.Plugin.Services;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Models;
+using TorchDiscordSync.Plugin.Services;
+using TorchDiscordSync.Plugin.Utils;
 
-namespace mamba.TorchDiscordSync.Plugin.Core
+namespace TorchDiscordSync.Plugin.Core
 {
     public class VerificationCommandHandler
     {
         private readonly MainConfig _config;
         private readonly VerificationService _verification;
         private readonly EventLoggingService _eventLog;
-        private readonly DiscordBotService _discordBot;
-        private readonly DiscordBotConfig _discordBotConfig;
+        private readonly DiscordService _discord;
 
         public VerificationCommandHandler(
             VerificationService verification,
             EventLoggingService evtLog,
             MainConfig config,
-            DiscordBotService bot,
-            DiscordBotConfig botConfig
+            DiscordService discord
         )
         {
             _verification = verification;
             _eventLog = evtLog;
             _config = config;
-            _discordBot = bot;
-            _discordBotConfig = botConfig;
+            _discord = discord;
         }
 
         /// <summary>
@@ -80,7 +77,7 @@ namespace mamba.TorchDiscordSync.Plugin.Core
                 LoggerUtil.LogDebug(
                     $"[VERIFY_CMD] Sending DM to {discordUsername} with code: {code}"
                 );
-                bool dmSent = await _discordBot.SendVerificationDMAsync(discordUsername, code);
+                bool dmSent = await _discord.SendVerificationDMAsync(discordUsername, code).ConfigureAwait(false);
 
                 if (!dmSent)
                 {
@@ -103,7 +100,7 @@ namespace mamba.TorchDiscordSync.Plugin.Core
                         + discordUsername
                         + ". DM sent with code: "
                         + code
-                );
+                ).ConfigureAwait(false);
 
                 LoggerUtil.LogSuccess(
                     "[VERIFY_CMD] "
@@ -121,7 +118,7 @@ namespace mamba.TorchDiscordSync.Plugin.Core
                     + " via DM!\n"
                     + "Check your Discord private messages\n"
                     + "Code expires in "
-                    + _discordBotConfig.VerificationCodeExpirationMinutes
+                    + (_config?.Discord?.VerificationCodeExpirationMinutes ?? 15)
                     + " minutes";
 
                 return message;
@@ -150,7 +147,7 @@ namespace mamba.TorchDiscordSync.Plugin.Core
 
             if (_verification != null)
             {
-                return await _verification.VerifyAsync(code, discordId, discordUsername);
+                return await _verification.VerifyAsync(code, discordId, discordUsername).ConfigureAwait(false);
             }
 
             return new VerificationResult { Message = "Verification service unavailable", IsSuccess = false };
@@ -174,7 +171,7 @@ namespace mamba.TorchDiscordSync.Plugin.Core
                     await _eventLog.LogAsync(
                         "VerificationRemoved",
                         "SteamID " + steamID + " unverified: " + reason
-                    );
+                    ).ConfigureAwait(false);
 
                     LoggerUtil.LogSuccess("[VERIFY] Unverified SteamID " + steamID + ": " + reason);
                     return "Verification removed";

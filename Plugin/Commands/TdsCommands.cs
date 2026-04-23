@@ -1,15 +1,15 @@
 using System.Linq;
-using mamba.TorchDiscordSync;
-using mamba.TorchDiscordSync.Plugin.Services;
+using TorchDiscordSync;
+using TorchDiscordSync.Plugin.Services;
 using Torch.Commands;
 using Torch.Commands.Permissions;
 using VRage.Game.ModAPI;
 
-namespace mamba.TorchDiscordSync.Plugin.Commands
+namespace TorchDiscordSync.Plugin.Commands
 {
     public class TdsCommands : CommandModule
     {
-        private MambaTorchDiscordSyncPlugin Plugin => (MambaTorchDiscordSyncPlugin)Context.Plugin;
+        private TorchDiscordSyncPlugin Plugin => (TorchDiscordSyncPlugin)Context.Plugin;
 
         [Command("tds", "Show Torch Discord Sync help")]
         [Permission(MyPromoteLevel.None)]

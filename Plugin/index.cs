@@ -4,13 +4,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Timers;
-using Discord.WebSocket;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Core;
-using mamba.TorchDiscordSync.Plugin.Handlers;
-using mamba.TorchDiscordSync.Plugin.Models;
-using mamba.TorchDiscordSync.Plugin.Services;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Core;
+using TorchDiscordSync.Plugin.Handlers;
+using TorchDiscordSync.Plugin.Models;
+using TorchDiscordSync.Plugin.Services;
+using TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Shared.Ipc;
 using Sandbox.Game.World;
 using Sandbox.ModAPI;
 using Torch;
@@ -21,14 +21,14 @@ using Torch.API.Session;
 using Torch.Commands;
 using Torch.Managers.ChatManager;
 
-namespace mamba.TorchDiscordSync
+namespace TorchDiscordSync
 {
     /// <summary>
-    /// mamba.TorchDiscordSync.Plugin – Space Engineers faction/Discord sync plugin.
+    /// TorchDiscordSync.Plugin – Space Engineers faction/Discord sync plugin.
     /// Features: faction sync, bidirectional chat relay, death logging, server
     /// monitoring, player verification, and admin commands.
     /// </summary>
-    public class MambaTorchDiscordSyncPlugin : TorchPluginBase
+    public class TorchDiscordSyncPlugin : TorchPluginBase
     {
         // ---- core services ----
         private DatabaseService             _db;
@@ -46,6 +46,7 @@ namespace mamba.TorchDiscordSync
         private PlayerTrackingService       _playerTracking;
         private DamageTrackingService       _damageTracking;
         private MonitoringService           _monitoringService;
+        private DiscordPresenceService      _discordPresenceService;
         private TdsCommandService           _tdsCommandService;
 
         // ---- handlers ----
@@ -56,7 +57,6 @@ namespace mamba.TorchDiscordSync
 
         // ---- configuration ----
         private MainConfig                  _config;
-        private DiscordBotConfig            _discordBotConfig;
 
         /// <summary>Read-only access to the loaded plugin configuration.</summary>
         public MainConfig Config => _config;
@@ -96,26 +96,15 @@ namespace mamba.TorchDiscordSync
                 }
                 LoggerUtil.LogInfo("Configuration loaded - Debug mode: " + _config.Debug);
 
-                // Build a DiscordBotConfig shim from MainConfig for backward compat
-                _discordBotConfig = new DiscordBotConfig
-                {
-                    BotToken                          = _config.Discord.BotToken,
-                    GuildID                           = _config.Discord.GuildID,
-                    BotPrefix                         = _config.Discord.BotPrefix,
-                    EnableDMNotifications             = _config.Discord.EnableDMNotifications,
-                    VerificationCodeExpirationMinutes =
-                        _config.Discord.VerificationCodeExpirationMinutes,
-                };
-
                 // ---- database (XML-based) ----
                 _db = new DatabaseService();
                 LoggerUtil.LogSuccess("Database service initialized (XML-based)");
 
                 // ---- Discord bot ----
-                _discordBot = new DiscordBotService(_discordBotConfig);
-                Task.Run(delegate { return ConnectBotAsync(); });
-
+                _discordBot = new DiscordBotService(CreateDiscordRuntimeConfig());
                 _discordWrapper = new DiscordService(_discordBot);
+                _discordPresenceService = new DiscordPresenceService(_config, _discordWrapper);
+                Task.Run(delegate { return ConnectBotAsync(); });
 
                 // ---- verification ----
                 _verification = new VerificationService(
@@ -171,31 +160,29 @@ namespace mamba.TorchDiscordSync
                     {
                         // ── Admin bot channel: handled exclusively by DiscordAdminCommandService ──
                         if (_config.Discord.AdminBotChannelId > 0
-                            && msg.Channel.Id == _config.Discord.AdminBotChannelId)
+                            && msg.ChannelId == _config.Discord.AdminBotChannelId)
                         {
                             if (_adminCommandService != null)
-                                await _adminCommandService.HandleMessageAsync(msg);
+                                await _adminCommandService.HandleMessageAsync(msg).ConfigureAwait(false);
                             return;
                         }
 
                         // Ignore bots and bot-prefix commands for all other channels
-                        if (msg.Author.IsBot ||
+                        if (msg.AuthorIsBot ||
+                            string.IsNullOrWhiteSpace(msg.Content) ||
                             msg.Content.StartsWith(_config.Discord.BotPrefix))
                             return;
 
-                        if (!(msg.Channel is SocketTextChannel textChannel))
-                            return;
-
-                        ulong channelId = textChannel.Id;
+                        ulong channelId = msg.ChannelId;
 
                         // Global Discord channel → game global chat
                         if (channelId == _config.Discord.ChatChannelId)
                         {
                             await _chatSync.SendDiscordMessageToGameAsync(
-                                msg.Author.Username, msg.Content);
+                                msg.AuthorUsername, msg.Content).ConfigureAwait(false);
                             LoggerUtil.LogDebug(
                                 "[DISCORD>GAME] Forwarded message from " +
-                                msg.Author.Username);
+                                msg.AuthorUsername);
                             return;
                         }
 
@@ -209,11 +196,11 @@ namespace mamba.TorchDiscordSync
                             {
                                 await _chatSync.SendDiscordMessageToFactionInGameAsync(
                                     faction.FactionID,
-                                    msg.Author.Username,
-                                    msg.Content);
+                                    msg.AuthorUsername,
+                                    msg.Content).ConfigureAwait(false);
                                 LoggerUtil.LogDebug(string.Format(
                                     "[DISCORD>FACTION] {0} from {1}",
-                                    faction.Tag, msg.Author.Username));
+                                    faction.Tag, msg.AuthorUsername));
                             }
                         }
                     };
@@ -225,7 +212,7 @@ namespace mamba.TorchDiscordSync
 
                 // ---- admin Discord command service ----
                 _adminCommandService = new DiscordAdminCommandService(
-                    _discordBot, _db, _factionSync, _orchestrator, _eventLog, _config);
+                    _discordWrapper, _db, _factionSync, _orchestrator, _eventLog, _config);
                 if (_config.Discord.AdminBotChannelId > 0)
                     LoggerUtil.LogSuccess(
                         "[INIT] DiscordAdminCommandService ready – admin channel ID: " +
@@ -236,7 +223,7 @@ namespace mamba.TorchDiscordSync
 
                 // ---- verification command handler ----
                 _verificationCommandHandler = new VerificationCommandHandler(
-                    _verification, _eventLog, _config, _discordBot, _discordBotConfig);
+                    _verification, _eventLog, _config, _discordWrapper);
                 LoggerUtil.LogInfo("[INIT] VerificationCommandHandler created and ready");
 
                 _tdsCommandService = new TdsCommandService(
@@ -254,7 +241,8 @@ namespace mamba.TorchDiscordSync
                     _db,
                     _chatSync,
                     _playerTracking,
-                    _tdsCommandService
+                    _tdsCommandService,
+                    _orchestrator
                 );
                 LoggerUtil.LogInfo("[INIT] CommandProcessor created");
 
@@ -345,15 +333,17 @@ namespace mamba.TorchDiscordSync
                 _syncTimer.Dispose();
             }
 
-            // Detach Discord bot events
-            if (_discordBot != null)
-                _discordBot.OnVerificationAttempt -= null;
-
             // Clean up monitoring service
             if (_monitoringService != null)
             {
                 _monitoringService.Dispose();
                 _monitoringService = null;
+            }
+
+            if (_discordPresenceService != null)
+            {
+                _discordPresenceService.Dispose();
+                _discordPresenceService = null;
             }
 
             // Unhook chat message handler
@@ -374,6 +364,15 @@ namespace mamba.TorchDiscordSync
             catch (Exception ex)
             {
                 LoggerUtil.LogError("Error unhooking chat handler: " + ex.Message);
+            }
+
+            try
+            {
+                _discordWrapper?.StopAsync().GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogError("Error stopping Discord host: " + ex.Message);
             }
 
             base.Dispose();
@@ -425,14 +424,18 @@ namespace mamba.TorchDiscordSync
             _config.DataStorage = newConfig.DataStorage;
             _config.PluginVersion = newConfig.PluginVersion;
 
-            if (_discordBotConfig != null && _config.Discord != null)
+            if (_config.Discord != null)
             {
-                _discordBotConfig.BotToken = _config.Discord.BotToken;
-                _discordBotConfig.GuildID = _config.Discord.GuildID;
-                _discordBotConfig.BotPrefix = _config.Discord.BotPrefix;
-                _discordBotConfig.EnableDMNotifications = _config.Discord.EnableDMNotifications;
-                _discordBotConfig.VerificationCodeExpirationMinutes =
-                    _config.Discord.VerificationCodeExpirationMinutes;
+                try
+                {
+                    _discordWrapper?.UpdateConfigurationAsync(CreateDiscordRuntimeConfig())
+                        .GetAwaiter()
+                        .GetResult();
+                }
+                catch (Exception ex)
+                {
+                    LoggerUtil.LogError("[DISCORD_IPC] Failed to push config reload: " + ex.Message);
+                }
             }
 
             return true;
@@ -555,7 +558,7 @@ namespace mamba.TorchDiscordSync
                     {
                         if (_monitoringService == null && _discordBot != null)
                         {
-                            _monitoringService = new MonitoringService(_config, _discordBot);
+                            _monitoringService = new MonitoringService(_config, _discordWrapper);
                             _monitoringService.Initialize();
                             LoggerUtil.LogSuccess(
                                 "[MONITORING] MonitoringService initialized after session load");
@@ -568,18 +571,30 @@ namespace mamba.TorchDiscordSync
                             ex.Message);
                     }
 
-                    // 6. Send server-started status to Discord (delayed for stable SimSpeed)
+                    // 6. Start Discord presence updates for live server stats
+                    try
+                    {
+                        _discordPresenceService?.Start();
+                    }
+                    catch (Exception ex)
+                    {
+                        LoggerUtil.LogError(
+                            "[PRESENCE] Failed to start DiscordPresenceService: " +
+                            ex.Message);
+                    }
+
+                    // 7. Send server-started status to Discord (delayed for stable SimSpeed)
                     if (_config?.Monitoring?.Enabled == true && _eventLog != null)
                     {
                         Task.Run(async () =>
                         {
-                            await Task.Delay(3000);
+                            await Task.Delay(3000).ConfigureAwait(false);
                             float stableSimSpeed = PluginUtils.GetCurrentSimSpeed();
-                            await _eventLog.LogServerStatusAsync("STARTED", stableSimSpeed);
+                            await _eventLog.LogServerStatusAsync("STARTED", stableSimSpeed).ConfigureAwait(false);
                         });
                     }
 
-                    // 7. Run startup routines (faction sync, timer start, etc.)
+                    // 8. Run startup routines (faction sync, timer start, etc.)
                     if (_isInitialized)
                         OnServerLoadedAsync(session);
                     break;
@@ -593,6 +608,11 @@ namespace mamba.TorchDiscordSync
                         _monitoringService.Stop();
                         LoggerUtil.LogInfo("[MONITORING] MonitoringService stopped");
                     }
+                    if (_discordPresenceService != null)
+                    {
+                        _discordPresenceService.Stop();
+                        LoggerUtil.LogInfo("[PRESENCE] DiscordPresenceService stopped");
+                    }
                     break;
 
                 case TorchSessionState.Unloaded:
@@ -603,7 +623,7 @@ namespace mamba.TorchDiscordSync
                     {
                         Task.Run(async () =>
                         {
-                            await _eventLog.LogServerStatusAsync("STOPPED", 0);
+                            await _eventLog.LogServerStatusAsync("STOPPED", 0).ConfigureAwait(false);
                         });
                     }
                     break;
@@ -628,12 +648,12 @@ namespace mamba.TorchDiscordSync
                 {
                     try
                     {
-                        await Task.Delay(5000);
+                        await Task.Delay(5000).ConfigureAwait(false);
                         float stableSimSpeed = PluginUtils.GetCurrentSimSpeed();
 
                         if (_orchestrator != null)
                         {
-                            await _orchestrator.CheckServerStatusAsync(stableSimSpeed);
+                            await _orchestrator.CheckServerStatusAsync(stableSimSpeed).ConfigureAwait(false);
                             LoggerUtil.LogSuccess(string.Format(
                                 "[STARTUP] Post-load status reported. SimSpeed: {0:F2}",
                                 stableSimSpeed));
@@ -700,14 +720,14 @@ namespace mamba.TorchDiscordSync
         /// </summary>
         private Task ConnectBotAsync()
         {
-            if (_discordBot == null)
+            if (_discordWrapper == null)
                 return Task.FromResult(0);
 
-            return _discordBot.ConnectAsync().ContinueWith(t =>
+            return _discordWrapper.StartAsync().ContinueWith(t =>
             {
                 if (t.Result)
                     LoggerUtil.LogInfo(
-                        "Discord Bot login/start completed; waiting for Ready event"
+                        "Discord host launched and IPC initialized; waiting for Ready state"
                     );
             });
         }
@@ -717,107 +737,101 @@ namespace mamba.TorchDiscordSync
         /// Assigns roles on success and notifies the player both via Discord DM
         /// and an in-game private message.
         /// </summary>
-        private Task HandleVerificationAsync(
+        private async Task HandleVerificationAsync(
             string code, ulong discordID, string discordUsername)
         {
             if (_verificationCommandHandler == null)
-                return Task.FromResult(0);
+                return;
 
-            return _verificationCommandHandler
-                .VerifyFromDiscordAsync(code, discordID, discordUsername)
-                .ContinueWith(async t =>
+            try
+            {
+                var result = await _verificationCommandHandler
+                    .VerifyFromDiscordAsync(code, discordID, discordUsername).ConfigureAwait(false);
+                bool isSuccess = result.IsSuccess;
+                LoggerUtil.LogInfo("[VERIFY] Verification result: " + result.Message);
+
+                var verifiedPlayer = isSuccess
+                    ? _db?.GetVerifiedPlayerByDiscordID(discordID)
+                    : null;
+
+                if (isSuccess && verifiedPlayer != null && _discordWrapper != null)
                 {
-                    try
+                    ulong verifiedRoleId = await _discordWrapper.GetOrCreateVerifiedRoleAsync().ConfigureAwait(false);
+                    if (verifiedRoleId != 0)
                     {
-                        var result    = t.Result;
-                        bool isSuccess = result.IsSuccess;
-                        LoggerUtil.LogInfo("[VERIFY] Verification result: " + result.Message);
+                        _config.Discord.VerifiedRoleId = verifiedRoleId;
+                        _config.Save();
 
-                        var verifiedPlayer = isSuccess
-                            ? _db?.GetVerifiedPlayerByDiscordID(discordID)
-                            : null;
+                        bool roleAssigned = await _discordWrapper.AssignRoleToUserAsync(
+                            discordID,
+                            verifiedRoleId).ConfigureAwait(false);
+                        if (roleAssigned)
+                            LoggerUtil.LogSuccess(
+                                "[VERIFY] Assigned Verified role to " + discordUsername);
+                    }
 
-                        // Assign "Verified" Discord role on success
-                        if (isSuccess && verifiedPlayer != null && _discordBot != null)
+                    if (_db != null)
+                    {
+                        var playerFaction = _db.GetAllFactions()?.FirstOrDefault(f =>
+                            f.Players != null &&
+                            f.Players.Any(p => p.SteamID == verifiedPlayer.SteamID));
+
+                        if (playerFaction != null && playerFaction.DiscordRoleID > 0)
                         {
-                            ulong verifiedRoleId =
-                                await _discordBot.GetOrCreateVerifiedRoleAsync();
-                            if (verifiedRoleId != 0)
+                            bool factionRoleAssigned = await _discordWrapper.AssignRoleToUserAsync(
+                                discordID,
+                                playerFaction.DiscordRoleID).ConfigureAwait(false);
+                            if (factionRoleAssigned)
                             {
-                                _config.Discord.VerifiedRoleId = verifiedRoleId;
-                                _config.Save();
-
-                                var discordClient = _discordBot.GetClient();
-                                if (discordClient != null)
-                                {
-                                    var discordUser = discordClient.GetUser(discordID);
-                                    if (discordUser != null)
-                                    {
-                                        bool roleAssigned =
-                                            await _discordBot.AssignVerifiedRoleAsync(
-                                                discordUser, verifiedRoleId);
-                                        if (roleAssigned)
-                                            LoggerUtil.LogSuccess(
-                                                "[VERIFY] Assigned Verified role to " +
-                                                discordUsername);
-                                    }
-                                }
-                            }
-
-                            // Also assign the player's faction role
-                            if (_db != null)
-                            {
-                                var playerFaction = _db.GetAllFactions()?.FirstOrDefault(f =>
-                                    f.Players != null &&
-                                    f.Players.Any(p => p.SteamID == verifiedPlayer.SteamID));
-
-                                if (playerFaction != null)
-                                {
-                                    var discordClient = _discordBot.GetClient();
-                                    if (discordClient != null)
-                                    {
-                                        var discordUser = discordClient.GetUser(discordID);
-                                        if (discordUser != null)
-                                        {
-                                            bool factionRoleAssigned =
-                                                await _discordBot.AssignFactionRoleAsync(
-                                                    discordUser, playerFaction.Tag);
-                                            if (factionRoleAssigned)
-                                                LoggerUtil.LogSuccess(string.Format(
-                                                    "[VERIFY] Assigned faction role '{0}' to {1}",
-                                                    playerFaction.Tag, discordUsername));
-                                        }
-                                    }
-                                }
+                                LoggerUtil.LogSuccess(string.Format(
+                                    "[VERIFY] Assigned faction role '{0}' to {1}",
+                                    playerFaction.Tag,
+                                    discordUsername));
                             }
                         }
-
-                        // Send result via Discord DM
-                        if (_discordBot != null)
-                        {
-                            await _discordBot.SendVerificationResultDMAsync(
-                                discordUsername, discordID, result.Message, isSuccess);
-                            LoggerUtil.LogDebug(
-                                "[VERIFY] Sent verification result DM to " + discordUsername);
-                        }
-
-                        // Send in-game notification to the player
-                        if (result.SteamIdForNotify.HasValue &&
-                            !string.IsNullOrEmpty(result.GamePlayerName))
-                        {
-                            SendInGameNotification(
-                                result.SteamIdForNotify.Value,
-                                result.GamePlayerName,
-                                isSuccess,
-                                result.Message);
-                        }
                     }
-                    catch (Exception ex)
-                    {
-                        LoggerUtil.LogError(
-                            "[VERIFY] Error in HandleVerificationAsync: " + ex.Message);
-                    }
-                });
+                }
+
+                if (_discordWrapper != null)
+                {
+                    await _discordWrapper.SendVerificationResultDMAsync(
+                        discordUsername,
+                        discordID,
+                        result.Message,
+                        isSuccess).ConfigureAwait(false);
+                    LoggerUtil.LogDebug(
+                        "[VERIFY] Sent verification result DM to " + discordUsername);
+                }
+
+                if (result.SteamIdForNotify.HasValue &&
+                    !string.IsNullOrEmpty(result.GamePlayerName))
+                {
+                    SendInGameNotification(
+                        result.SteamIdForNotify.Value,
+                        result.GamePlayerName,
+                        isSuccess,
+                        result.Message);
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogError(
+                    "[VERIFY] Error in HandleVerificationAsync: " + ex.Message);
+            }
+        }
+
+        private DiscordRuntimeConfig CreateDiscordRuntimeConfig()
+        {
+            return new DiscordRuntimeConfig
+            {
+                BotToken = _config?.Discord?.BotToken,
+                GuildId = _config?.Discord?.GuildID ?? 0,
+                BotPrefix = _config?.Discord?.BotPrefix ?? "!",
+                EnableDmNotifications = _config?.Discord?.EnableDMNotifications ?? true,
+                VerificationCodeExpirationMinutes =
+                    _config?.Discord?.VerificationCodeExpirationMinutes ?? 15,
+                AdminBotChannelId = _config?.Discord?.AdminBotChannelId ?? 0,
+            };
         }
 
         /// <summary>

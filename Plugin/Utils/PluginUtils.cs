@@ -1,15 +1,15 @@
 // Plugin/Utils/PluginUtils.cs
 using System;
 using System.Timers;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Utils;
 using Sandbox;
 using Sandbox.Game;
 
-namespace mamba.TorchDiscordSync.Plugin.Utils
+namespace TorchDiscordSync.Plugin.Utils
 {
     /// <summary>
-    /// Helper methods for MambaTorchDiscordSyncPlugin to reduce duplication.
+    /// Helper methods for TorchDiscordSyncPlugin to reduce duplication.
     /// Contains config checks, SimSpeed retrieval, and timer management.
     /// </summary>
     public static class PluginUtils

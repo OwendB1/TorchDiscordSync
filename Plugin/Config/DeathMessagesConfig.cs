@@ -3,10 +3,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Xml.Serialization;
-using mamba.TorchDiscordSync.Plugin.Models;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Models;
+using TorchDiscordSync.Plugin.Utils;
 
-namespace mamba.TorchDiscordSync.Plugin.Config
+namespace TorchDiscordSync.Plugin.Config
 {
     /// <summary>
     /// ENHANCED: Death message templates with contextual variations

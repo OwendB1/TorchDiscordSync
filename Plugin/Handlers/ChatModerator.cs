@@ -2,12 +2,12 @@
 using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Services;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Services;
+using TorchDiscordSync.Plugin.Utils;
 using Torch.API.Managers;
 
-namespace mamba.TorchDiscordSync.Plugin.Handlers
+namespace TorchDiscordSync.Plugin.Handlers
 {
     // Class for tracking user violations
     public class UserViolationRecord

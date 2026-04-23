@@ -2,9 +2,9 @@
 using System;
 using System.IO;
 using System.Xml.Serialization;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Utils;
 
-namespace mamba.TorchDiscordSync.Plugin.Config
+namespace TorchDiscordSync.Plugin.Config
 {
     [XmlRoot("MainConfig")]
     public class MainConfig
@@ -23,7 +23,7 @@ namespace mamba.TorchDiscordSync.Plugin.Config
         /// Plugin directory name - used for all plugin files and configs
         /// Change this one constant to change plugin directory name everywhere!
         /// </summary>
-        public static readonly string PLUGIN_DIR_NAME = "mambaSaveData";
+        public static readonly string PLUGIN_DIR_NAME = "TDSSaveData";
 
         /// <summary>
         /// Get the base instance directory (where Torch stores data)
@@ -46,7 +46,7 @@ namespace mamba.TorchDiscordSync.Plugin.Config
 
         /// <summary>
         /// Get the plugin directory (for configs, data, logs)
-        /// Example: C:\Path\To\Torch\Instance\mambaTorchDiscordSync
+        /// Example: C:\Path\To\Torch\Instance\TDSSaveData
         /// </summary>
         public static string GetPluginDirectory()
         {
@@ -120,11 +120,11 @@ namespace mamba.TorchDiscordSync.Plugin.Config
 
         /// <summary>
         /// Get the log directory (for plugin logs)
-        /// Returns: [PluginDirectory]/logs
+        /// Returns: [PluginDirectory]/Logging
         /// </summary>
         public static string GetLogDirectory()
         {
-            string logDir = Path.Combine(GetPluginDirectory(), "logs");
+            string logDir = Path.Combine(GetPluginDirectory(), "Logging");
 
             if (!Directory.Exists(logDir))
             {
@@ -220,7 +220,7 @@ namespace mamba.TorchDiscordSync.Plugin.Config
             Debug = false;
             SyncIntervalSeconds = 30;
             AdminSteamIDs = new long[] { 
-                76561198020205461, // mamba's SteamID - replace with actual admin SteamIDs
+                76561198020205461, // Replace with actual admin SteamIDs
                 76561198000000001  // Add actual admin SteamIDs here
                 };
             Discord = new DiscordConfig();
@@ -244,16 +244,20 @@ namespace mamba.TorchDiscordSync.Plugin.Config
                         MainConfig config = (MainConfig)serializer.Deserialize(fs);
                         if (config == null) return new MainConfig();
 
+                        if (config.Discord == null)
+                            config.Discord = new DiscordConfig();
+
                         // Migration: root SyncIntervalSeconds → Discord.SyncIntervalSeconds
                         if (config.SyncIntervalSeconds > 0)
                         {
-                            if (config.Discord == null) config.Discord = new DiscordConfig();
                             if (config.Discord.SyncIntervalSeconds <= 0)
                                 config.Discord.SyncIntervalSeconds = config.SyncIntervalSeconds;
                             config.SyncIntervalSeconds = 0; // clear root field
                         }
-                        if (config.Discord != null && config.Discord.SyncIntervalSeconds <= 0)
+                        if (config.Discord.SyncIntervalSeconds <= 0)
                             config.Discord.SyncIntervalSeconds = 30;
+                        if (config.Discord.PresenceUpdateIntervalSeconds <= 0)
+                            config.Discord.PresenceUpdateIntervalSeconds = 1;
 
                         return config;
                     }
@@ -354,6 +358,9 @@ namespace mamba.TorchDiscordSync.Plugin.Config
         [XmlElement]
         public ulong VerifiedRoleId { get; set; }
 
+        [XmlElement]
+        public int PresenceUpdateIntervalSeconds { get; set; }
+
         public DiscordConfig()
         {
             SyncIntervalSeconds = 30;
@@ -371,6 +378,7 @@ namespace mamba.TorchDiscordSync.Plugin.Config
             AdminAlertChannelId = 1470032530139906178;
             AdminBotChannelId   = 1478357809044131980;
             VerifiedRoleId = 0;
+            PresenceUpdateIntervalSeconds = 1;
         }
     }
 

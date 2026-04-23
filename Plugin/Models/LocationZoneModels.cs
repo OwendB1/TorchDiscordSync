@@ -1,7 +1,7 @@
 // Plugin/Models/LocationZoneModels.cs
 using System;
 
-namespace mamba.TorchDiscordSync.Plugin.Models
+namespace TorchDiscordSync.Plugin.Models
 {
     /// <summary>
     /// ENHANCED: Location zones with surface vs orbit distinction

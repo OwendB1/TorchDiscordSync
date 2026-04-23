@@ -2,9 +2,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using mamba.TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Config;
 
-namespace mamba.TorchDiscordSync.Plugin.Utils
+namespace TorchDiscordSync.Plugin.Utils
 {
     public static class SecurityUtil
     {
@@ -57,7 +57,7 @@ namespace mamba.TorchDiscordSync.Plugin.Utils
             return IsPlayerAdmin(steamId, adminSteamIds);
         }
 
-        public static string SanitizeMessage(string input, int maxLength = 2000)
+        public static string SanitizeMessage(string input, int maxLength = 4000)
         {
             if (string.IsNullOrWhiteSpace(input))
                 return "";

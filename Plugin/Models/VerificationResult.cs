@@ -1,4 +1,4 @@
-namespace mamba.TorchDiscordSync.Plugin.Models
+namespace TorchDiscordSync.Plugin.Models
 {
     /// <summary>
     /// Result of verification attempt from Discord. Used to send in-game notification (success or error).

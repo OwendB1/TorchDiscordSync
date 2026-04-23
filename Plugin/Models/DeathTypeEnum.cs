@@ -1,5 +1,5 @@
 // Plugin/Models/DeathTypeEnum.cs
-namespace mamba.TorchDiscordSync.Plugin.Models
+namespace TorchDiscordSync.Plugin.Models
 {
     /// <summary>
     /// ENHANCED: Death type enumeration with Turret distinction

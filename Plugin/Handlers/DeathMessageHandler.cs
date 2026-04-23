@@ -2,14 +2,14 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Models;
-using mamba.TorchDiscordSync.Plugin.Services;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Models;
+using TorchDiscordSync.Plugin.Services;
+using TorchDiscordSync.Plugin.Utils;
 using Sandbox.Game;
 using VRage.Game.ModAPI;
 
-namespace mamba.TorchDiscordSync.Plugin.Handlers
+namespace TorchDiscordSync.Plugin.Handlers
 {
     /// <summary>
     /// COMPLETE: Death message handler with DamageTracking integration

@@ -1,11 +1,12 @@
 // Plugin/Services/PlayerTrackingService.cs
 using System;
 using System.Collections.Generic;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Handlers;
-using mamba.TorchDiscordSync.Plugin.Models;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Handlers;
+using TorchDiscordSync.Plugin.Models;
+using TorchDiscordSync.Plugin.Utils;
 using Sandbox.Game;
 using Sandbox.Game.World;
 using Sandbox.ModAPI;
@@ -13,7 +14,7 @@ using Torch.API;
 using VRage.Game.ModAPI;
 using VRageMath;
 
-namespace mamba.TorchDiscordSync.Plugin.Services
+namespace TorchDiscordSync.Plugin.Services
 {
     /// <summary>
     /// Service for tracking player joins/leaves and DEATHS via IMyCharacter.CharacterDied event
@@ -30,6 +31,10 @@ namespace mamba.TorchDiscordSync.Plugin.Services
 
         // Cache player names for join/leave messages (prevents SteamID display on leave)
         private Dictionary<ulong, string> _playerNames = new Dictionary<ulong, string>();
+        private readonly Dictionary<string, DateTime> _recentChatEvents =
+            new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, DateTime> _expectedSelfEchoEvents =
+            new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 
         private System.Timers.Timer _pollingTimer;
         private HashSet<ulong> _knownPlayers = new HashSet<ulong>();
@@ -42,6 +47,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
         private Dictionary<ulong, int> _deathEventCounters = new Dictionary<ulong, int>();
 
         private object _lockObject = new object();
+        private const int CHAT_EVENT_DEDUP_SECONDS = 15;
 
         public PlayerTrackingService(
             EventLoggingService eventLog,
@@ -80,11 +86,11 @@ namespace mamba.TorchDiscordSync.Plugin.Services
 
         private void InitializePolling()
         {
-            _pollingTimer = new System.Timers.Timer(5000);
+            _pollingTimer = new System.Timers.Timer(1000);
             _pollingTimer.Elapsed += OnPollingTick;
             _pollingTimer.AutoReset = true;
             _pollingTimer.Start();
-            LoggerUtil.LogInfo("Player polling timer started (5-second intervals)");
+            LoggerUtil.LogInfo("Player polling timer started (1-second fallback intervals)");
         }
 
         private void InitializeDeathTracking()
@@ -205,7 +211,16 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     LoggerUtil.LogInfo(
                         $"Player joined: {player.DisplayName} ({player.SteamUserId})"
                     );
-                    _ = _eventLog.LogPlayerJoinAsync(player.DisplayName, player.SteamUserId);
+                    if (WasChatEventHandledRecently("join", player.DisplayName))
+                    {
+                        LoggerUtil.LogDebug(
+                            $"[TRACKING] Poll join suppressed; chat event already handled for {player.DisplayName}");
+                    }
+                    else
+                    {
+                        RememberExpectedSelfEcho("join", player.DisplayName);
+                        _ = _eventLog.LogPlayerJoinAsync(player.DisplayName, player.SteamUserId);
+                    }
                 }
             }
 
@@ -233,7 +248,16 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 _playerNames.Remove(steamId);
 
                 LoggerUtil.LogInfo($"Player left: {playerName} ({steamId})");
-                _ = _eventLog.LogPlayerLeaveAsync(playerName, steamId);
+                if (WasChatEventHandledRecently("leave", playerName))
+                {
+                    LoggerUtil.LogDebug(
+                        $"[TRACKING] Poll leave suppressed; chat event already handled for {playerName}");
+                }
+                else
+                {
+                    RememberExpectedSelfEcho("leave", playerName);
+                    _ = _eventLog.LogPlayerLeaveAsync(playerName, steamId);
+                }
             }
         }
 
@@ -357,13 +381,271 @@ namespace mamba.TorchDiscordSync.Plugin.Services
         /// </summary>
         public void ProcessSystemChatMessage(string message)
         {
-            if (string.IsNullOrEmpty(message))
+            if (string.IsNullOrWhiteSpace(message))
                 return;
 
-            if (message.Contains(" died") || message.Contains(" was killed"))
+            if (TryExtractPlayerJoin(message, out var joinedPlayer))
+            {
+                if (TryConsumeExpectedSelfEcho("join", joinedPlayer))
+                    return;
+
+                HandleChatDrivenJoin(joinedPlayer);
+                return;
+            }
+
+            if (TryExtractPlayerLeave(message, out var leftPlayer))
+            {
+                if (TryConsumeExpectedSelfEcho("leave", leftPlayer))
+                    return;
+
+                HandleChatDrivenLeave(leftPlayer);
+                return;
+            }
+
+            if ((message.Contains(" died") || message.Contains(" was killed"))
+                && _deathHandler == null
+                && TryRememberChatEvent("death", message))
             {
                 _ = _eventLog.LogDeathAsync(message);
             }
+        }
+
+        private void HandleChatDrivenJoin(string playerName)
+        {
+            if (!TryRememberChatEvent("join", playerName))
+                return;
+
+            ulong steamId = 0;
+            var player = FindOnlinePlayerByName(playerName);
+            if (player != null)
+            {
+                steamId = player.SteamUserId;
+                RememberKnownPlayer(player);
+            }
+
+            LoggerUtil.LogInfo($"[TRACKING] Chat-driven join detected: {playerName} ({steamId})");
+            if (_eventLog != null)
+                _ = _eventLog.LogPlayerJoinAsync(playerName, steamId, false);
+        }
+
+        private void HandleChatDrivenLeave(string playerName)
+        {
+            if (!TryRememberChatEvent("leave", playerName))
+                return;
+
+            ulong steamId = FindKnownSteamIdByName(playerName);
+            LoggerUtil.LogInfo($"[TRACKING] Chat-driven leave detected: {playerName} ({steamId})");
+            if (_eventLog != null)
+                _ = _eventLog.LogPlayerLeaveAsync(playerName, steamId, false);
+        }
+
+        private bool TryExtractPlayerJoin(string message, out string playerName)
+        {
+            return TryExtractPlayerEvent(
+                message,
+                @"^(?<player>.+?)\s+(has\s+)?joined\s+(the\s+)?server\.?$",
+                out playerName)
+                || TryExtractPlayerEvent(
+                    message,
+                    @"^(?<player>.+?)\s+connected\s+(to\s+(the\s+)?)?server\.?$",
+                    out playerName);
+        }
+
+        private bool TryExtractPlayerLeave(string message, out string playerName)
+        {
+            return TryExtractPlayerEvent(
+                message,
+                @"^(?<player>.+?)\s+(has\s+)?left\s+(the\s+)?server\.?$",
+                out playerName)
+                || TryExtractPlayerEvent(
+                    message,
+                    @"^(?<player>.+?)\s+disconnected(\s+from\s+(the\s+)?server)?\.?$",
+                    out playerName);
+        }
+
+        private bool TryExtractPlayerEvent(string message, string pattern, out string playerName)
+        {
+            playerName = null;
+            string normalized = NormalizeSystemChatMessage(message);
+            var match = Regex.Match(normalized, pattern, RegexOptions.IgnoreCase);
+            if (!match.Success)
+                return false;
+
+            playerName = match.Groups["player"].Value.Trim();
+            return IsPlausiblePlayerName(playerName);
+        }
+
+        private static string NormalizeSystemChatMessage(string message)
+        {
+            string text = (message ?? string.Empty).Trim();
+            text = text.Replace(":sunny:", string.Empty);
+            text = text.Replace(":new_moon:", string.Empty);
+            text = text.Trim();
+            if (text.EndsWith(".", StringComparison.Ordinal))
+                text = text.Substring(0, text.Length - 1).Trim();
+            return text;
+        }
+
+        private static bool IsPlausiblePlayerName(string playerName)
+        {
+            if (string.IsNullOrWhiteSpace(playerName))
+                return false;
+
+            string name = playerName.Trim();
+            return name.Length <= 64
+                   && !name.Equals("Server", StringComparison.OrdinalIgnoreCase)
+                   && !name.Equals("Discord", StringComparison.OrdinalIgnoreCase)
+                   && !name.Equals("TDS", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool TryRememberChatEvent(string eventType, string subject)
+        {
+            lock (_lockObject)
+            {
+                CleanupRecentChatEvents();
+
+                string key = BuildChatEventKey(eventType, subject);
+                if (_recentChatEvents.TryGetValue(key, out var lastSeen)
+                    && (DateTime.UtcNow - lastSeen).TotalSeconds < CHAT_EVENT_DEDUP_SECONDS)
+                {
+                    return false;
+                }
+
+                _recentChatEvents[key] = DateTime.UtcNow;
+                return true;
+            }
+        }
+
+        private void RememberExpectedSelfEcho(string eventType, string subject)
+        {
+            lock (_lockObject)
+            {
+                CleanupExpectedSelfEchoEvents();
+                _expectedSelfEchoEvents[BuildChatEventKey(eventType, subject)] = DateTime.UtcNow;
+            }
+        }
+
+        private bool TryConsumeExpectedSelfEcho(string eventType, string subject)
+        {
+            lock (_lockObject)
+            {
+                CleanupExpectedSelfEchoEvents();
+                string key = BuildChatEventKey(eventType, subject);
+                if (!_expectedSelfEchoEvents.ContainsKey(key))
+                    return false;
+
+                _expectedSelfEchoEvents.Remove(key);
+                LoggerUtil.LogDebug(
+                    $"[TRACKING] Ignored self-echoed {eventType} chat message for {subject}");
+                return true;
+            }
+        }
+
+        private bool WasChatEventHandledRecently(string eventType, string subject)
+        {
+            lock (_lockObject)
+            {
+                CleanupRecentChatEvents();
+
+                string key = BuildChatEventKey(eventType, subject);
+                return _recentChatEvents.TryGetValue(key, out var lastSeen)
+                       && (DateTime.UtcNow - lastSeen).TotalSeconds < CHAT_EVENT_DEDUP_SECONDS;
+            }
+        }
+
+        private void CleanupRecentChatEvents()
+        {
+            var cutoff = DateTime.UtcNow.AddSeconds(-CHAT_EVENT_DEDUP_SECONDS);
+            var expired = new List<string>();
+            foreach (var entry in _recentChatEvents)
+            {
+                if (entry.Value < cutoff)
+                    expired.Add(entry.Key);
+            }
+
+            foreach (var key in expired)
+                _recentChatEvents.Remove(key);
+        }
+
+        private void CleanupExpectedSelfEchoEvents()
+        {
+            var cutoff = DateTime.UtcNow.AddSeconds(-5);
+            var expired = new List<string>();
+            foreach (var entry in _expectedSelfEchoEvents)
+            {
+                if (entry.Value < cutoff)
+                    expired.Add(entry.Key);
+            }
+
+            foreach (var key in expired)
+                _expectedSelfEchoEvents.Remove(key);
+        }
+
+        private static string BuildChatEventKey(string eventType, string subject)
+        {
+            return (eventType ?? string.Empty).Trim().ToLowerInvariant()
+                   + ":"
+                   + (subject ?? string.Empty).Trim().ToLowerInvariant();
+        }
+
+        private IMyPlayer FindOnlinePlayerByName(string playerName)
+        {
+            try
+            {
+                if (MyAPIGateway.Players == null || string.IsNullOrWhiteSpace(playerName))
+                    return null;
+
+                var players = new List<IMyPlayer>();
+                MyAPIGateway.Players.GetPlayers(players);
+                foreach (var player in players)
+                {
+                    if (player != null
+                        && string.Equals(
+                            player.DisplayName,
+                            playerName,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        return player;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogDebug("[TRACKING] FindOnlinePlayerByName failed: " + ex.Message);
+            }
+
+            return null;
+        }
+
+        private ulong FindKnownSteamIdByName(string playerName)
+        {
+            lock (_lockObject)
+            {
+                foreach (var entry in _playerNames)
+                {
+                    if (string.Equals(entry.Value, playerName, StringComparison.OrdinalIgnoreCase))
+                        return entry.Key;
+                }
+            }
+
+            return 0;
+        }
+
+        private void RememberKnownPlayer(IMyPlayer player)
+        {
+            if (player == null)
+                return;
+
+            lock (_lockObject)
+            {
+                _knownPlayers.Add(player.SteamUserId);
+                _playerNames[player.SteamUserId] = player.DisplayName;
+                if (!_deathEventCounters.ContainsKey(player.SteamUserId))
+                    _deathEventCounters[player.SteamUserId] = 0;
+            }
+
+            if (player.Character != null)
+                HookCharacterDeath(player.Character, player.SteamUserId, player.DisplayName);
         }
 
         public void Dispose()
@@ -381,6 +663,8 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 _deathEventCounters.Clear();
                 _knownPlayers.Clear();
                 _playerNames.Clear();
+                _recentChatEvents.Clear();
+                _expectedSelfEchoEvents.Clear();
             }
         }
     }

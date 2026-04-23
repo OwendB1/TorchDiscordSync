@@ -1,12 +1,12 @@
 using System;
 using System.Text;
 using System.Threading.Tasks;
-using mamba.TorchDiscordSync;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Core;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Core;
+using TorchDiscordSync.Plugin.Utils;
 
-namespace mamba.TorchDiscordSync.Plugin.Services
+namespace TorchDiscordSync.Plugin.Services
 {
     public sealed class TdsCommandRequest
     {
@@ -26,12 +26,12 @@ namespace mamba.TorchDiscordSync.Plugin.Services
         private readonly DatabaseService _db;
         private readonly EventLoggingService _eventLog;
         private readonly FactionSyncService _factionSync;
-        private readonly MambaTorchDiscordSyncPlugin _plugin;
+        private readonly TorchDiscordSyncPlugin _plugin;
         private readonly SyncOrchestrator _orchestrator;
         private readonly VerificationCommandHandler _verificationCommandHandler;
 
         public TdsCommandService(
-            MambaTorchDiscordSyncPlugin plugin,
+            TorchDiscordSyncPlugin plugin,
             MainConfig config,
             DatabaseService db,
             FactionSyncService factionSync,
@@ -236,7 +236,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
             sb.AppendLine("=== Verification Guide ===");
             sb.AppendLine("1. Run: !tds verify <DiscordNameOrId>");
             sb.AppendLine("2. Check your Discord DM from the bot.");
-            sb.AppendLine("3. Reply in Discord with: !verify <code>");
+            sb.AppendLine("3. In Discord, run: /verify code:<your code>");
             sb.AppendLine("4. Confirm with: !tds verify status");
             sb.AppendLine();
             sb.AppendLine($"Codes expire after {_config.VerificationCodeExpirationMinutes} minutes.");

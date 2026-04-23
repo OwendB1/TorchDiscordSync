@@ -1,7 +1,7 @@
 // Plugin/Models/EventLogModel.cs
 using System;
 
-namespace mamba.TorchDiscordSync.Plugin.Models
+namespace TorchDiscordSync.Plugin.Models
 {
     [System.Serializable]
     public class EventLogModel

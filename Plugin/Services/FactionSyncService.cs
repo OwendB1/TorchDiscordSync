@@ -3,15 +3,15 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Models;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Models;
+using TorchDiscordSync.Plugin.Utils;
 using Sandbox.Game.Multiplayer;
 using Sandbox.Game.World;
 using Sandbox.ModAPI;
 using VRage.Game.ModAPI;
 
-namespace mamba.TorchDiscordSync.Plugin.Services
+namespace TorchDiscordSync.Plugin.Services
 {
     /// <summary>
     /// Synchronizes Space Engineers factions with Discord roles and channels
@@ -79,7 +79,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
 
                 try
                 {
-                    bool deleted = await _discord.DeleteChannelAsync(trackedChannel.ChannelID);
+                    bool deleted = await _discord.DeleteChannelAsync(trackedChannel.ChannelID).ConfigureAwait(false);
                     trackedChannel.DeletedOnUndo = true;
 
                     if (deleted)
@@ -374,7 +374,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                             LoggerUtil.LogDebug(
                                 "[FACTION_SYNC] Creating Discord role for faction: " + dbFaction.Tag
                             );
-                            dbFaction.DiscordRoleID = await _discord.CreateRoleAsync(dbFaction.Tag);
+                            dbFaction.DiscordRoleID = await _discord.CreateRoleAsync(dbFaction.Tag).ConfigureAwait(false);
 
                             if (dbFaction.DiscordRoleID > 0)
                             {
@@ -431,7 +431,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                             channelName,
                             _config.Discord.FactionCategoryId,
                             dbFaction.DiscordRoleID
-                        );
+                        ).ConfigureAwait(false);
 
                             if (dbFaction.DiscordChannelID > 0)
                             {
@@ -527,7 +527,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                                 {
                                     LoggerUtil.LogDebug(
                                         "[FACTION_SYNC] Creating voice channel for faction: " + lowcaseName);
-                                    var voiceId = await _discord.CreateVoiceChannelAsync(lowcaseName, catId, roleId);
+                                    var voiceId = await _discord.CreateVoiceChannelAsync(lowcaseName, catId, roleId).ConfigureAwait(false);
                                     if (voiceId > 0)
                                     {
                                         dbFaction.DiscordVoiceChannelID = voiceId;
@@ -574,7 +574,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                         LoggerUtil.LogSuccess($"[FACTION_SYNC] ✓ Saved faction: {dbFaction.Tag}");
 
                         // Sync Discord roles for verified players in this faction
-                        await SyncFactionRolesForVerifiedPlayersAsync(dbFaction);
+                        await SyncFactionRolesForVerifiedPlayersAsync(dbFaction).ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
@@ -646,7 +646,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                         // Delete Discord role
                         if (faction.DiscordRoleID != 0)
                         {
-                            await _discord.DeleteRoleAsync(faction.DiscordRoleID);
+                            await _discord.DeleteRoleAsync(faction.DiscordRoleID).ConfigureAwait(false);
                             LoggerUtil.LogInfo(
                                 $"[FACTION_SYNC] Deleted Discord role for: {faction.Tag}"
                             );
@@ -654,16 +654,16 @@ namespace mamba.TorchDiscordSync.Plugin.Services
 
                         if (faction.DiscordChannelID != 0)
                         {
-                            await _discord.DeleteChannelAsync(faction.DiscordChannelID);
+                            await _discord.DeleteChannelAsync(faction.DiscordChannelID).ConfigureAwait(false);
                             LoggerUtil.LogInfo($"[FACTION_SYNC] Deleted Discord channel for: {faction.Name}");
                         }
                         if (faction.DiscordVoiceChannelID != 0)
                         {
-                            await _discord.DeleteChannelAsync(faction.DiscordVoiceChannelID);
+                            await _discord.DeleteChannelAsync(faction.DiscordVoiceChannelID).ConfigureAwait(false);
                             LoggerUtil.LogInfo($"[FACTION_SYNC] Deleted voice for: {faction.Name}");
                         }
 
-                        await DeleteTrackedExtraChannelsAsync(faction, "FACTION_SYNC");
+                        await DeleteTrackedExtraChannelsAsync(faction, "FACTION_SYNC").ConfigureAwait(false);
                     }
                 }
 
@@ -699,7 +699,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 {
                     try
                     {
-                        await _discord.DeleteChannelAsync(faction.DiscordChannelID);
+                        await _discord.DeleteChannelAsync(faction.DiscordChannelID).ConfigureAwait(false);
                         LoggerUtil.LogSuccess(
                             $"[FACTION_SYNC] Deleted old channel for {factionTag}"
                         );
@@ -716,7 +716,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 {
                     try
                     {
-                        await _discord.DeleteRoleAsync(faction.DiscordRoleID);
+                        await _discord.DeleteRoleAsync(faction.DiscordRoleID).ConfigureAwait(false);
                         LoggerUtil.LogSuccess($"[FACTION_SYNC] Deleted old role for {factionTag}");
                     }
                     catch (Exception ex)
@@ -728,7 +728,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 }
 
                 // Recreate faction role
-                var newRoleId = await _discord.CreateRoleAsync(factionTag);
+                var newRoleId = await _discord.CreateRoleAsync(factionTag).ConfigureAwait(false);
                 if (newRoleId == 0)
                 {
                     LoggerUtil.LogError(
@@ -744,7 +744,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 var newChannelId = await _discord.CreateChannelAsync(
                     faction.Name.ToLower().Replace(" ", "-"),
                     _config.Discord.FactionCategoryId
-                );
+                ).ConfigureAwait(false);
 
                 if (newChannelId == 0)
                 {
@@ -770,7 +770,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                                 await _discord.AssignRoleToUserAsync(
                                     verifiedPlayer.DiscordUserID,
                                     newRoleId
-                                );
+                                ).ConfigureAwait(false);
                                 LoggerUtil.LogDebug(
                                     $"[FACTION_SYNC] Assigned new role to {verifiedPlayer.DiscordUsername}"
                                 );
@@ -881,14 +881,14 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 var result = new System.Text.StringBuilder();
                 result.AppendLine($"[UNDO] {factionTag}");
 
-                await DeleteTrackedExtraChannelsAsync(faction, "ADMIN:SYNC:UNDO", result);
+                await DeleteTrackedExtraChannelsAsync(faction, "ADMIN:SYNC:UNDO", result).ConfigureAwait(false);
 
                 // Delete Discord role
                 if (faction.DiscordRoleID > 0)
                 {
                     try
                     {
-                        bool roleDeleted = await _discord.DeleteRoleAsync(faction.DiscordRoleID);
+                        bool roleDeleted = await _discord.DeleteRoleAsync(faction.DiscordRoleID).ConfigureAwait(false);
                         if (roleDeleted)
                         {
                             result.AppendLine($"✓ Deleted Discord role: {faction.DiscordRoleName}");
@@ -915,7 +915,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 {
                     try
                     {
-                        bool channelDeleted = await _discord.DeleteChannelAsync(faction.DiscordChannelID);
+                        bool channelDeleted = await _discord.DeleteChannelAsync(faction.DiscordChannelID).ConfigureAwait(false);
                         if (channelDeleted)
                         {
                             result.AppendLine($"✓ Deleted Discord channel: {faction.DiscordChannelName}");
@@ -940,7 +940,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 {
                     try
                     {
-                        await _discord.DeleteChannelAsync(faction.DiscordVoiceChannelID);
+                        await _discord.DeleteChannelAsync(faction.DiscordVoiceChannelID).ConfigureAwait(false);
                         result.AppendLine($"✓ Deleted voice: {faction.DiscordVoiceChannelName}");
                         faction.DiscordVoiceChannelID = 0;
                         faction.DiscordVoiceChannelName = "";
@@ -1001,7 +1001,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                         // Delete role if exists
                         if (faction.DiscordRoleID > 0)
                         {
-                            bool deleted = await _discord.DeleteRoleAsync(faction.DiscordRoleID);
+                            bool deleted = await _discord.DeleteRoleAsync(faction.DiscordRoleID).ConfigureAwait(false);
                             if (deleted)
                             {
                                 result.AppendLine($"✓ Deleted orphaned role: {faction.DiscordRoleName}");
@@ -1012,7 +1012,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                         // Delete channel if exists
                         if (faction.DiscordChannelID > 0)
                         {
-                            bool deleted = await _discord.DeleteChannelAsync(faction.DiscordChannelID);
+                            bool deleted = await _discord.DeleteChannelAsync(faction.DiscordChannelID).ConfigureAwait(false);
                             if (deleted)
                             {
                                 result.AppendLine($"✓ Deleted orphaned channel: {faction.DiscordChannelName}");
@@ -1022,7 +1022,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
 
                         if (faction.DiscordVoiceChannelID > 0)
                         {
-                            bool deleted = await _discord.DeleteChannelAsync(faction.DiscordVoiceChannelID);
+                            bool deleted = await _discord.DeleteChannelAsync(faction.DiscordVoiceChannelID).ConfigureAwait(false);
                             if (deleted)
                             {
                                 result.AppendLine($"✓ Deleted orphaned voice channel: {faction.DiscordVoiceChannelName}");
@@ -1030,7 +1030,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                             }
                         }
 
-                        await DeleteTrackedExtraChannelsAsync(faction, "ADMIN:SYNC:CLEANUP", result);
+                        await DeleteTrackedExtraChannelsAsync(faction, "ADMIN:SYNC:CLEANUP", result).ConfigureAwait(false);
 
                         // Reset faction status
                         faction.SyncStatus = "Pending";
@@ -1096,7 +1096,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     {
                         try
                         {
-                            bool deletedRole = await _discord.DeleteRoleAsync(faction.DiscordRoleID);
+                            bool deletedRole = await _discord.DeleteRoleAsync(faction.DiscordRoleID).ConfigureAwait(false);
                             if (deletedRole)
                             {
                                 result.AppendLine("  ✓ Deleted role ID: " + faction.DiscordRoleID);
@@ -1144,7 +1144,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                         {
                             bool deletedChannel = await _discord.DeleteChannelAsync(
                                 faction.DiscordChannelID
-                            );
+                            ).ConfigureAwait(false);
                             if (deletedChannel)
                             {
                                 result.AppendLine(
@@ -1193,7 +1193,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                         {
                             bool deletedVoice = await _discord.DeleteChannelAsync(
                                 faction.DiscordVoiceChannelID
-                            );
+                            ).ConfigureAwait(false);
                             if (deletedVoice)
                             {
                                 result.AppendLine(
@@ -1236,7 +1236,7 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                         result.AppendLine("  ℹ No Discord voice channel stored for this faction.");
                     }
 
-                    await DeleteTrackedExtraChannelsAsync(faction, "ADMIN:SYNC:UNDO_ALL", result);
+                    await DeleteTrackedExtraChannelsAsync(faction, "ADMIN:SYNC:UNDO_ALL", result).ConfigureAwait(false);
 
                     // Finally, remove faction record from XML
                     _db.DeleteFaction(faction.FactionID);
@@ -1323,120 +1323,27 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 // Get faction member Steam IDs
                 var steamIdsInFaction = new HashSet<long>(dbFaction.Players.Select(p => p.SteamID));
 
-                // Get Discord bot service
-                var botService = _discord.GetBotService();
-                if (botService == null)
-                {
-                    LoggerUtil.LogDebug("[FACTION_ROLE_SYNC] DiscordBotService not available");
-                    return;
-                }
-
-                // Get Discord client (SocketDiscordClient - has GetUser support)
-                var client = botService.GetClient();
-                if (client == null)
-                {
-                    LoggerUtil.LogDebug("[FACTION_ROLE_SYNC] Discord client not available");
-                    return;
-                }
-
-                // Get guild (SocketGuild - has GetUser support)
-                var guild = client.GetGuild(_config.Discord.GuildID);
-                if (guild == null)
-                {
-                    LoggerUtil.LogDebug("[FACTION_ROLE_SYNC] Discord guild not found");
-                    return;
-                }
-
-                // Get faction role
-                var role = guild.GetRole(dbFaction.DiscordRoleID);
-                if (role == null)
-                {
-                    LoggerUtil.LogDebug(
-                        $"[FACTION_ROLE_SYNC] Role not found for faction {dbFaction.Tag}"
-                    );
-                    return;
-                }
-
                 LoggerUtil.LogInfo(
                     $"[FACTION_ROLE_SYNC] Syncing roles for faction {dbFaction.Tag} ({dbFaction.Players.Count} members)"
                 );
 
-                // ============================================================
-                // PART 1: Add faction role to verified players in this faction
-                // ============================================================
-                foreach (var vp in verifiedPlayers)
+                var desiredDiscordUserIds = verifiedPlayers
+                    .Where(vp => steamIdsInFaction.Contains(vp.SteamID) && vp.DiscordUserID > 0)
+                    .Select(vp => vp.DiscordUserID)
+                    .Distinct()
+                    .ToList();
+
+                bool synced = await _discord.SyncRoleMembersAsync(
+                    dbFaction.DiscordRoleID,
+                    desiredDiscordUserIds,
+                    dbFaction.Tag).ConfigureAwait(false);
+
+                if (!synced)
                 {
-                    // Check if this verified player is in this faction
-                    if (!steamIdsInFaction.Contains(vp.SteamID))
-                        continue;
-
-                    // Get Discord user from guild by ID (SocketGuild supports GetUser)
-                    var user = guild.GetUser(vp.DiscordUserID);
-                    if (user == null)
-                    {
-                        LoggerUtil.LogDebug(
-                            $"[FACTION_ROLE_SYNC] Discord user not found for {vp.DiscordUsername} (ID: {vp.DiscordUserID})"
-                        );
-                        continue;
-                    }
-
-                    // Check if user already has the role (use Roles collection, not RoleIds)
-                    if (user.Roles.Contains(role))
-                    {
-                        LoggerUtil.LogDebug(
-                            $"[FACTION_ROLE_SYNC] SKIP {vp.DiscordUsername} - already has {dbFaction.Tag}"
-                        );
-                        continue;
-                    }
-
-                    // Add role to user
-                    try
-                    {
-                        await user.AddRoleAsync(role);
-                        LoggerUtil.LogSuccess(
-                            $"[FACTION_ROLE_SYNC] Added {dbFaction.Tag} to {vp.DiscordUsername}"
-                        );
-                    }
-                    catch (Exception ex)
-                    {
-                        LoggerUtil.LogError(
-                            $"[FACTION_ROLE_SYNC] Failed to add role to {vp.DiscordUsername}: {ex.Message}"
-                        );
-                    }
-                }
-
-                // ============================================================
-                // PART 2: Remove faction role from verified players NOT in this faction
-                // ============================================================
-                foreach (var vp in verifiedPlayers)
-                {
-                    // Check if this verified player is IN this faction
-                    if (steamIdsInFaction.Contains(vp.SteamID))
-                        continue; // Player is in faction, don't remove role
-
-                    // Get Discord user from guild by ID (SocketGuild supports GetUser)
-                    var user = guild.GetUser(vp.DiscordUserID);
-                    if (user == null)
-                        continue;
-
-                    // Check if user has the faction role (use Roles collection, not RoleIds)
-                    if (user.Roles.Contains(role))
-                    {
-                        // Remove role from user
-                        try
-                        {
-                            await user.RemoveRoleAsync(role);
-                            LoggerUtil.LogSuccess(
-                                $"[FACTION_ROLE_SYNC] Removed {dbFaction.Tag} from {vp.DiscordUsername} (no longer in faction)"
-                            );
-                        }
-                        catch (Exception ex)
-                        {
-                            LoggerUtil.LogError(
-                                $"[FACTION_ROLE_SYNC] Failed to remove role from {vp.DiscordUsername}: {ex.Message}"
-                            );
-                        }
-                    }
+                    LoggerUtil.LogWarning(
+                        $"[FACTION_ROLE_SYNC] Sync request failed for faction {dbFaction.Tag}"
+                    );
+                    return;
                 }
 
                 LoggerUtil.LogSuccess($"[FACTION_ROLE_SYNC] Completed for faction {dbFaction.Tag}");

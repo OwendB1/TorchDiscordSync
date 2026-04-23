@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
 <PluginManifest>
-  <Name>mamba.TDS</Name>
+  <Name>TDS</Name>
   <Guid>e1b1e28a-7b3c-4b8d-bfc3-5d9c1f8d9e6f</Guid>
   <Version>2.4.47</Version>
   <Description>
@@ -8,6 +8,6 @@
     chat synchronization, server monitoring (SimSpeed), and security features. XML-based persistence
     with configurable death messages and admin command support.
   </Description>
-  <Author>mamba</Author>
-  <RepositoryUrl>https://github.com/mamba73/mamba.TorchDiscordSync.Plugin</RepositoryUrl>
+  <Author>TorchDiscordSync</Author>
+  <RepositoryUrl>https://github.com/OwendB1/TorchDiscordSync</RepositoryUrl>
 </PluginManifest>

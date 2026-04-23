@@ -3,12 +3,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Models;
-using mamba.TorchDiscordSync.Plugin.Services;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Models;
+using TorchDiscordSync.Plugin.Services;
+using TorchDiscordSync.Plugin.Utils;
 
-namespace mamba.TorchDiscordSync.Plugin.Core
+namespace TorchDiscordSync.Plugin.Core
 {
     /// <summary>
     /// Orchestrates all synchronization operations
@@ -21,6 +21,11 @@ namespace mamba.TorchDiscordSync.Plugin.Core
         private readonly DiscordService _discord;
         private readonly FactionSyncService _factionSync;
         private readonly EventLoggingService _eventLog;
+        private readonly object _factionSyncQueueLock = new object();
+        private bool _factionSyncWorkerRunning;
+        private bool _factionSyncRequested;
+        private string _factionSyncReason;
+        private Task _factionSyncWorkerTask = Task.FromResult(0);
 
         /// <summary>
         /// Constructor - UPDATED
@@ -140,16 +145,12 @@ namespace mamba.TorchDiscordSync.Plugin.Core
 
         public Task SyncFactionsAsync()
         {
-            if (_config != null && _config.Debug)
-            {
-                LoggerUtil.LogInfo("Starting faction sync...");
-            }
+            return QueueFactionSyncAsync("scheduled/manual request", true);
+        }
 
-            if (_factionSync != null)
-            {
-                return _factionSync.SyncFactionsAsync(new List<FactionModel>());
-            }
-            return Task.FromResult(0);
+        public Task RequestFactionSyncFromChatAsync(string reason)
+        {
+            return QueueFactionSyncAsync(reason, false);
         }
 
         public Task LogEventAsync(string eventName, string details)
@@ -188,6 +189,79 @@ namespace mamba.TorchDiscordSync.Plugin.Core
             }
 
             return Task.FromResult(0);
+        }
+
+        private Task QueueFactionSyncAsync(string reason, bool waitForCompletion)
+        {
+            if (_config?.Faction == null || !_config.Faction.Enabled)
+            {
+                LoggerUtil.LogDebug("[SYNC] Faction sync request ignored because faction sync is disabled");
+                return Task.FromResult(0);
+            }
+
+            if (_factionSync == null)
+                return Task.FromResult(0);
+
+            Task workerTask;
+            lock (_factionSyncQueueLock)
+            {
+                _factionSyncRequested = true;
+                _factionSyncReason = string.IsNullOrWhiteSpace(reason)
+                    ? "chat event"
+                    : reason;
+
+                if (!_factionSyncWorkerRunning)
+                {
+                    _factionSyncWorkerRunning = true;
+                    _factionSyncWorkerTask = Task.Run((Func<Task>)DrainFactionSyncQueueAsync);
+                }
+
+                workerTask = _factionSyncWorkerTask;
+            }
+
+            return waitForCompletion ? workerTask : Task.FromResult(0);
+        }
+
+        private async Task DrainFactionSyncQueueAsync()
+        {
+            while (true)
+            {
+                string reason;
+                lock (_factionSyncQueueLock)
+                {
+                    if (!_factionSyncRequested)
+                    {
+                        _factionSyncWorkerRunning = false;
+                        _factionSyncWorkerTask = Task.FromResult(0);
+                        _factionSyncReason = null;
+                        return;
+                    }
+
+                    _factionSyncRequested = false;
+                    reason = _factionSyncReason;
+                    _factionSyncReason = null;
+                }
+
+                await RunFactionSyncAsync(reason).ConfigureAwait(false);
+            }
+        }
+
+        private async Task RunFactionSyncAsync(string reason)
+        {
+            try
+            {
+                if (_config != null && _config.Debug)
+                    LoggerUtil.LogInfo("[SYNC] Starting faction sync: " + reason);
+
+                await _factionSync.SyncFactionsAsync(new List<FactionModel>())
+                    .ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogError("[SYNC] Faction sync error: " + ex.Message);
+                if (_eventLog != null)
+                    await _eventLog.LogAsync("SyncError", ex.Message).ConfigureAwait(false);
+            }
         }
     }
 }

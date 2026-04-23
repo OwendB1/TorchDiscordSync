@@ -2,7 +2,7 @@
 using System;
 using System.Xml.Serialization;
 
-namespace mamba.TorchDiscordSync.Plugin.Models
+namespace TorchDiscordSync.Plugin.Models
 {
     [Serializable]
     public class FactionPlayerModel

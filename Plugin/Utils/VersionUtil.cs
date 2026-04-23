@@ -2,9 +2,9 @@
 using System;
 using System.IO;
 using System.Xml;
-using mamba.TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Config;
 
-namespace mamba.TorchDiscordSync.Plugin.Utils
+namespace TorchDiscordSync.Plugin.Utils
 {
     /// <summary>
     /// Loads plugin version from manifest.xml dynamically
@@ -13,11 +13,22 @@ namespace mamba.TorchDiscordSync.Plugin.Utils
     public static class VersionUtil
     {
         private static string _cachedVersion = null;
-        private static readonly string ManifestPath = Path.Combine(
-            AppDomain.CurrentDomain.BaseDirectory,
-            "Plugins",
-            "mamba.TorchDiscordSync.Plugin",
-            "manifest.xml");
+        private static readonly string ManifestPath = ResolveManifestPath();
+
+        private static string ResolveManifestPath()
+        {
+            try
+            {
+                var assemblyDirectory = Path.GetDirectoryName(typeof(VersionUtil).Assembly.Location);
+                if (!string.IsNullOrWhiteSpace(assemblyDirectory))
+                    return Path.Combine(assemblyDirectory, "manifest.xml");
+            }
+            catch
+            {
+            }
+
+            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "manifest.xml");
+        }
 
         /// <summary>
         /// Get current plugin version from manifest.xml
@@ -86,7 +97,7 @@ namespace mamba.TorchDiscordSync.Plugin.Utils
                 LoggerUtil.LogError("[VersionUtil] Failed to load name from manifest: " + ex.Message);
             }
 
-            return "mamba.TorchDiscordSync.Plugin";
+            return "TDS";
         }
 
         /// <summary>
@@ -113,7 +124,7 @@ namespace mamba.TorchDiscordSync.Plugin.Utils
                 LoggerUtil.LogError("[VersionUtil] Failed to load author from manifest: " + ex.Message);
             }
 
-            return "mamba";
+            return "TorchDiscordSync";
         }
 
         /// <summary>

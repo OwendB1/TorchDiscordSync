@@ -9,14 +9,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using mamba.TorchDiscordSync.Plugin.Config;
-using mamba.TorchDiscordSync.Plugin.Models;
-using mamba.TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Models;
+using TorchDiscordSync.Plugin.Utils;
 using Sandbox.Game;
 using Sandbox.ModAPI;
 using VRage.Game.ModAPI;
 
-namespace mamba.TorchDiscordSync.Plugin.Services
+namespace TorchDiscordSync.Plugin.Services
 {
     /// <summary>
     /// Bidirectional chat synchronization service.
@@ -36,6 +36,10 @@ namespace mamba.TorchDiscordSync.Plugin.Services
 
         // Rate-limit: minimum milliseconds between messages from the same source
         private const int MESSAGE_THROTTLE_MS = 500;
+        private const int DISCORD_SINGLE_MESSAGE_MAX_LENGTH = 2000;
+        private const int GAME_TO_DISCORD_MAX_LENGTH = DISCORD_SINGLE_MESSAGE_MAX_LENGTH * 2;
+        private const int DISCORD_TO_GAME_MAX_LENGTH = 200;
+        private const int FACTION_GLOBAL_FALLBACK_MAX_LENGTH = 400;
 
         public ChatSyncService(DiscordService discord, MainConfig config, DatabaseService db)
         {
@@ -309,8 +313,10 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                                 cleanMessage
                             );
 
-                            if (broadcastMsg.Length > 200)
-                                broadcastMsg = broadcastMsg.Substring(0, 197) + "...";
+                            if (broadcastMsg.Length > FACTION_GLOBAL_FALLBACK_MAX_LENGTH)
+                                broadcastMsg = broadcastMsg.Substring(
+                                    0,
+                                    FACTION_GLOBAL_FALLBACK_MAX_LENGTH - 3) + "...";
 
                             // Author "TDS" is filtered by the loop-guard in HandleChatMessage.
                             // playerId=0 → global broadcast fallback (visible to all).
@@ -392,8 +398,8 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     return;
 
                 string discordText = string.Format("{0}: {1}", authorName, message);
-                if (discordText.Length > 2000)
-                    discordText = discordText.Substring(0, 1990) + "...";
+                if (discordText.Length > GAME_TO_DISCORD_MAX_LENGTH)
+                    discordText = discordText.Substring(0, GAME_TO_DISCORD_MAX_LENGTH - 3) + "...";
 
                 LoggerUtil.LogInfo(
                     string.Format(
@@ -467,8 +473,8 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                     return null;
 
                 string formatted = string.Format("{0}: {1}", playerName, cleanMessage);
-                if (formatted.Length > 2000)
-                    formatted = formatted.Substring(0, 1990) + "...";
+                if (formatted.Length > GAME_TO_DISCORD_MAX_LENGTH)
+                    formatted = formatted.Substring(0, GAME_TO_DISCORD_MAX_LENGTH - 3) + "...";
 
                 return formatted;
             }
@@ -492,8 +498,8 @@ namespace mamba.TorchDiscordSync.Plugin.Services
                 string cleanMessage = CleanMessageText(message);
 
                 // Limit length for in-game chat readability
-                if (cleanMessage.Length > 100)
-                    cleanMessage = cleanMessage.Substring(0, 97) + "...";
+                if (cleanMessage.Length > DISCORD_TO_GAME_MAX_LENGTH)
+                    cleanMessage = cleanMessage.Substring(0, DISCORD_TO_GAME_MAX_LENGTH - 3) + "...";
 
                 return string.Format("[Discord] {0}: {1}", discordUser, cleanMessage);
             }
