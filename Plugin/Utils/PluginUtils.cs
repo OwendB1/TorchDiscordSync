@@ -19,7 +19,7 @@ namespace TorchDiscordSync.Plugin.Utils
             try
             {
                 // Based on DLL report: [NS: Sandbox.Game.Multiplayer] -> Class: Sync -> [P] [ST] float ServerSimulationRatio
-                float simSpeed = Sandbox.Game.Multiplayer.Sync.ServerSimulationRatio;
+                var simSpeed = Sandbox.Game.Multiplayer.Sync.ServerSimulationRatio;
 
                 // Check for invalid values during server startup or physics freezes
                 if (float.IsNaN(simSpeed) || float.IsInfinity(simSpeed))

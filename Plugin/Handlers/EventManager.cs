@@ -173,7 +173,7 @@ namespace TorchDiscordSync.Plugin.Handlers
         {
             try
             {
-                string cause = "unknown";
+                var cause = "unknown";
 
                 // Determine death cause based on damage type and attacker
                 if (damageInfo.AttackerId == 0)

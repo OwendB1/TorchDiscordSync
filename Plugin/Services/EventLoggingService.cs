@@ -70,7 +70,7 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                string message = "";
+                var message = "";
 
                 // Use custom messages from config if available
                 if (_config != null && _config.Monitoring != null)
@@ -128,11 +128,11 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                string threshold =
+                var threshold =
                     _config != null && _config.Monitoring != null
                         ? _config.Monitoring.SimSpeedThreshold.ToString("F2")
                         : "0.60";
-                string message =
+                var message =
                     "SIMSPEED ALERT - Current: "
                     + simSpeed.ToString("F2")
                     + " (Threshold: "
@@ -200,8 +200,8 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                string template = _config.Chat.JoinMessage ?? ":sunny: {p} joined the server";
-                string message = template.Replace("{p}", playerName);
+                var template = _config.Chat.JoinMessage ?? ":sunny: {p} joined the server";
+                var message = template.Replace("{p}", playerName);
 
                 // ili sa SteamID
                 // if (steamID != 0 && !_config.Privacy.HideSteamId) message += " (" + steamID + ")";
@@ -212,7 +212,7 @@ namespace TorchDiscordSync.Plugin.Services
                     try
                     {
                         // Remove Discord formatting for game chat
-                        string gameMessage = message.Replace(":sunny:", "").Trim();
+                        var gameMessage = message.Replace(":sunny:", "").Trim();
                         Sandbox.Game.MyVisualScriptLogicProvider.SendChatMessage(
                             gameMessage,
                             "Server",
@@ -254,8 +254,8 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                string template = _config.Chat.LeaveMessage ?? ":sunny: {p} left the server";
-                string message = template.Replace("{p}", playerName);
+                var template = _config.Chat.LeaveMessage ?? ":sunny: {p} left the server";
+                var message = template.Replace("{p}", playerName);
                 // string message = playerName + " (" + steamID + ") left the server";
 
                 if (echoToGame)
@@ -264,7 +264,7 @@ namespace TorchDiscordSync.Plugin.Services
                     try
                     {
                         // Remove Discord formatting for game chat
-                        string gameMessage = message.Replace(":sunny:", "").Trim();
+                        var gameMessage = message.Replace(":sunny:", "").Trim();
                         Sandbox.Game.MyVisualScriptLogicProvider.SendChatMessage(
                             gameMessage,
                             "Server",
@@ -306,7 +306,7 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                string message =
+                var message =
                     "Sync Complete - Factions: " + factionsCount + ", Players: " + playersCount;
 
                 if (_config != null && _config.Discord != null && _config.Discord.StaffLog != 0)

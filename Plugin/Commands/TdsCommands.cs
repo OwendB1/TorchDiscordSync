@@ -97,9 +97,9 @@ namespace TorchDiscordSync.Plugin.Commands
 
         private TdsCommandRequest CreateRequest()
         {
-            bool isAdmin = Context.Player == null || Context.Player.PromoteLevel >= MyPromoteLevel.Admin;
-            long steamId = Context.Player != null ? (long)Context.Player.SteamUserId : 0;
-            string playerName = Context.Player?.DisplayName ?? "Server";
+            var isAdmin = Context.Player == null || Context.Player.PromoteLevel >= MyPromoteLevel.Admin;
+            var steamId = Context.Player != null ? (long)Context.Player.SteamUserId : 0;
+            var playerName = Context.Player?.DisplayName ?? "Server";
 
             return new TdsCommandRequest
             {

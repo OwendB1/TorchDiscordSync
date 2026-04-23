@@ -45,7 +45,7 @@ namespace TorchDiscordSync.Plugin.Services
                     return;
                 }
 
-                int intervalSeconds = _config.Monitoring.StatusUpdateIntervalSeconds;
+                var intervalSeconds = _config.Monitoring.StatusUpdateIntervalSeconds;
                 if (intervalSeconds <= 0)
                 {
                     LoggerUtil.LogWarning(
@@ -54,7 +54,7 @@ namespace TorchDiscordSync.Plugin.Services
                     intervalSeconds = 30;
                 }
 
-                int intervalMs = intervalSeconds * 1000;
+                var intervalMs = intervalSeconds * 1000;
 
                 _monitoringTimer = new Timer(intervalMs);
                 _monitoringTimer.Elapsed += OnMonitoringTimerElapsed;
@@ -114,10 +114,10 @@ namespace TorchDiscordSync.Plugin.Services
             {
                 LoggerUtil.LogDebug("[MONITORING_UPDATE] Starting channel name update...");
 
-                float currentSimSpeed = PluginUtils.GetCurrentSimSpeed();
+                var currentSimSpeed = PluginUtils.GetCurrentSimSpeed();
                 LoggerUtil.LogDebug($"[MONITORING_UPDATE] Current SimSpeed: {currentSimSpeed:F2}");
 
-                int currentPlayerCount = GetOnlinePlayerCount();
+                var currentPlayerCount = GetOnlinePlayerCount();
                 LoggerUtil.LogDebug(
                     $"[MONITORING_UPDATE] Current player count: {currentPlayerCount}"
                 );
@@ -171,7 +171,7 @@ namespace TorchDiscordSync.Plugin.Services
                     "[MONITORING_SIMSPEED] Updating SimSpeed channel to " + simSpeed.ToString("F2")
                 );
 
-                ulong channelId = _config.Discord.SimSpeedChannelId;
+                var channelId = _config.Discord.SimSpeedChannelId;
                 if (channelId == 0)
                 {
                     LoggerUtil.LogWarning("[MONITORING_SIMSPEED] SimSpeedChannelId not configured");
@@ -184,18 +184,18 @@ namespace TorchDiscordSync.Plugin.Services
                     return;
                 }
 
-                string emoji =
+                var emoji =
                     simSpeed >= _config.Monitoring.SimSpeedThreshold
                         ? _config.Monitoring.SimSpeedNormalEmoji
                         : _config.Monitoring.SimSpeedWarningEmoji;
 
-                string newName = _config
+                var newName = _config
                     .Monitoring.SimSpeedChannelNameFormat.Replace("{emoji}", emoji)
                     .Replace("{ss}", simSpeed.ToString("F2"));
 
                 LoggerUtil.LogDebug("[MONITORING_SIMSPEED] Setting channel name to: " + newName);
 
-                bool updated = await _discord.UpdateChannelNameAsync(channelId, newName).ConfigureAwait(false);
+                var updated = await _discord.UpdateChannelNameAsync(channelId, newName).ConfigureAwait(false);
                 if (!updated)
                 {
                     LoggerUtil.LogError(
@@ -216,8 +216,8 @@ namespace TorchDiscordSync.Plugin.Services
                 )
                 {
                     // Check cooldown - ne spam-uj
-                    TimeSpan timeSinceLastAlert = DateTime.UtcNow - _lastSimSpeedAlertTime;
-                    int cooldownSeconds = _config.Monitoring.SimSpeedAlertCooldownSeconds;
+                    var timeSinceLastAlert = DateTime.UtcNow - _lastSimSpeedAlertTime;
+                    var cooldownSeconds = _config.Monitoring.SimSpeedAlertCooldownSeconds;
 
                     if (timeSinceLastAlert.TotalSeconds >= cooldownSeconds)
                     {
@@ -240,7 +240,7 @@ namespace TorchDiscordSync.Plugin.Services
                     else
                     {
                         // Cooldown nije prošao - skip alert
-                        double remainingSeconds = cooldownSeconds - timeSinceLastAlert.TotalSeconds;
+                        var remainingSeconds = cooldownSeconds - timeSinceLastAlert.TotalSeconds;
                         LoggerUtil.LogDebug(
                             $"[MONITORING] SimSpeed alert on cooldown ({remainingSeconds:F0}s remaining)"
                         );
@@ -272,7 +272,7 @@ namespace TorchDiscordSync.Plugin.Services
                     "[MONITORING_PLAYERS] Updating player count channel to " + playerCount
                 );
 
-                ulong channelId = _config.Discord.PlayerCountChannelId;
+                var channelId = _config.Discord.PlayerCountChannelId;
                 if (channelId == 0)
                 {
                     LoggerUtil.LogWarning(
@@ -287,15 +287,15 @@ namespace TorchDiscordSync.Plugin.Services
                     return;
                 }
 
-                int maxPlayers = GetMaxPlayerCount();
+                var maxPlayers = GetMaxPlayerCount();
 
-                string newName = _config
+                var newName = _config
                     .Monitoring.PlayerCountChannelNameFormat.Replace("{p}", playerCount.ToString())
                     .Replace("{pp}", maxPlayers.ToString());
 
                 LoggerUtil.LogDebug("[MONITORING_PLAYERS] Setting channel name to: " + newName);
 
-                bool updated = await _discord.UpdateChannelNameAsync(channelId, newName).ConfigureAwait(false);
+                var updated = await _discord.UpdateChannelNameAsync(channelId, newName).ConfigureAwait(false);
                 if (!updated)
                 {
                     LoggerUtil.LogError(
@@ -322,7 +322,7 @@ namespace TorchDiscordSync.Plugin.Services
                     return;
                 }
 
-                ulong channelId = _config.Discord.AdminAlertChannelId;
+                var channelId = _config.Discord.AdminAlertChannelId;
                 if (channelId == 0)
                 {
                     channelId = _config.Discord.StaffLog;
@@ -340,7 +340,7 @@ namespace TorchDiscordSync.Plugin.Services
                     return;
                 }
 
-                bool sent = await _discord.SendLogAsync(channelId, message).ConfigureAwait(false);
+                var sent = await _discord.SendLogAsync(channelId, message).ConfigureAwait(false);
                 if (!sent)
                 {
                     LoggerUtil.LogWarning(
@@ -368,7 +368,7 @@ namespace TorchDiscordSync.Plugin.Services
                     return 0;
                 }
 
-                int count = MySession.Static.Players.GetOnlinePlayerCount();
+                var count = MySession.Static.Players.GetOnlinePlayerCount();
                 LoggerUtil.LogDebug($"[MONITORING_COUNT] Found {count} online players");
                 return count;
             }
@@ -383,7 +383,7 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                int maxPlayers = 20;
+                var maxPlayers = 20;
 
                 if (MySession.Static != null && MySession.Static.Settings != null)
                 {

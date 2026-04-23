@@ -65,7 +65,7 @@ namespace TorchDiscordSync.Plugin.Services
             {
                 LoggerUtil.LogDebug("[SQLITE] Starting initialization...");
 
-                bool isNewFile = !File.Exists(_dbPath);
+                var isNewFile = !File.Exists(_dbPath);
                 if (isNewFile)
                     LoggerUtil.LogDebug("[SQLITE] Database file does not exist – will be created.");
                 else
@@ -264,7 +264,7 @@ namespace TorchDiscordSync.Plugin.Services
                 {
                     try
                     {
-                        string now = ToDb(DateTime.UtcNow);
+                        var now = ToDb(DateTime.UtcNow);
 
                         // Upsert faction row
                         using (var cmd = Cmd(@"
@@ -560,7 +560,7 @@ namespace TorchDiscordSync.Plugin.Services
             lock (_lock)
             {
                 LoggerUtil.LogDebug($"[SQLITE] SavePlayer: steam_id={player.SteamID}, nick={player.OriginalNick}");
-                string now = ToDb(DateTime.UtcNow);
+                var now = ToDb(DateTime.UtcNow);
                 Execute(@"
                     INSERT INTO players
                         (steam_id, player_id, original_nick, synced_nick, faction_id, discord_user_id, created_at, updated_at)
@@ -750,8 +750,8 @@ namespace TorchDiscordSync.Plugin.Services
             lock (_lock)
             {
                 LoggerUtil.LogDebug($"[SQLITE] AddPendingVerification: steam_id={steamID}");
-                string now = ToDb(DateTime.UtcNow);
-                string expires = ToDb(DateTime.UtcNow.AddMinutes(expirationMinutes));
+                var now = ToDb(DateTime.UtcNow);
+                var expires = ToDb(DateTime.UtcNow.AddMinutes(expirationMinutes));
                 Execute(@"
                     INSERT INTO pending_verifications
                         (steam_id, discord_username, verification_code, code_generated_at, expires_at, game_player_name)

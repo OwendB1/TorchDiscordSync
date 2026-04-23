@@ -71,9 +71,9 @@ namespace TorchDiscordSync.Plugin.Utils
         {
             try
             {
-                long entityId = ResolveEntityId(steamId);
-                string tag = entityId != 0 ? "[W]" : "[G]";
-                string payload = markPrivate ? $"{PRIVATE_PREFIX} {message}" : message;
+                var entityId = ResolveEntityId(steamId);
+                var tag = entityId != 0 ? "[W]" : "[G]";
+                var payload = markPrivate ? $"{PRIVATE_PREFIX} {message}" : message;
                 LoggerUtil.LogDebug($"{tag} {author} [{color}] {message}");
                 MyVisualScriptLogicProvider.SendChatMessage(payload, author, entityId, color);
             }
@@ -166,7 +166,7 @@ namespace TorchDiscordSync.Plugin.Utils
             // Normal chat → Discord
             if (chatSync != null && config?.Chat != null)
             {
-                bool enabled = config.Chat.ServerToDiscord;
+                var enabled = config.Chat.ServerToDiscord;
                 LoggerUtil.LogDebug($"[CHAT PROCESS] ServerToDiscord enabled: {enabled}");
 
                 if (enabled)

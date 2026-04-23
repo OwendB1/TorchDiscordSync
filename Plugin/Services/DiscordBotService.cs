@@ -672,7 +672,7 @@ namespace TorchDiscordSync.Plugin.Services
 
         private void OnHostProcessExited(object sender, EventArgs e)
         {
-            string exitDetails = string.Empty;
+            var exitDetails = string.Empty;
 
             try
             {
@@ -1100,7 +1100,7 @@ namespace TorchDiscordSync.Plugin.Services
                 using (var archive = new ZipArchive(stream, ZipArchiveMode.Read))
                 {
                     ZipArchiveEntry manifestEntry = null;
-                    bool foundHostEntrypoint = false;
+                    var foundHostEntrypoint = false;
 
                     foreach (var entry in archive.Entries)
                     {
@@ -1321,7 +1321,7 @@ namespace TorchDiscordSync.Plugin.Services
             out bool foundHostEntrypoint)
         {
             foundHostEntrypoint = false;
-            int copiedFileCount = 0;
+            var copiedFileCount = 0;
             var stagedDirectory = GetStagedHostDirectory();
             Directory.CreateDirectory(stagedDirectory);
 

@@ -83,10 +83,10 @@ namespace TorchDiscordSync.Plugin.Utils
             {
                 if (File.Exists(ManifestPath))
                 {
-                    XmlDocument doc = new XmlDocument();
+                    var doc = new XmlDocument();
                     doc.Load(ManifestPath);
 
-                    XmlNode versionNode = doc.SelectSingleNode("//Version");
+                    var versionNode = doc.SelectSingleNode("//Version");
                     if (versionNode != null && !string.IsNullOrEmpty(versionNode.InnerText))
                     {
                         _cachedVersion = versionNode.InnerText.Trim();
@@ -123,10 +123,10 @@ namespace TorchDiscordSync.Plugin.Utils
             {
                 if (File.Exists(ManifestPath))
                 {
-                    XmlDocument doc = new XmlDocument();
+                    var doc = new XmlDocument();
                     doc.Load(ManifestPath);
 
-                    XmlNode nameNode = doc.SelectSingleNode("//Name");
+                    var nameNode = doc.SelectSingleNode("//Name");
                     if (nameNode != null && !string.IsNullOrEmpty(nameNode.InnerText))
                     {
                         return nameNode.InnerText.Trim();

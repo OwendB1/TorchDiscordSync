@@ -85,7 +85,7 @@ namespace TorchDiscordSync.Plugin.Core
                 // 2. Synchronize Discord
                 LoggerUtil.LogDebug("Syncing Discord...", _config != null && _config.Debug);
                 var playerFactions = new List<FactionModel>();
-                for (int i = 0; i < factions.Count; i++)
+                for (var i = 0; i < factions.Count; i++)
                 {
                     if (factions[i].Tag.Length == 3)
                         playerFactions.Add(factions[i]);
@@ -94,8 +94,8 @@ namespace TorchDiscordSync.Plugin.Core
                 await _factionSync.SyncFactionsAsync(playerFactions);
 
                 // 3. Log completion
-                int playerCount = 0;
-                for (int i = 0; i < playerFactions.Count; i++)
+                var playerCount = 0;
+                for (var i = 0; i < playerFactions.Count; i++)
                 {
                     if (playerFactions[i].Players != null)
                         playerCount += playerFactions[i].Players.Count;
@@ -169,7 +169,7 @@ namespace TorchDiscordSync.Plugin.Core
                 if (_config == null || _config.Monitoring == null)
                     return Task.FromResult(0);
 
-                float threshold = _config.Monitoring.SimSpeedThreshold;
+                var threshold = _config.Monitoring.SimSpeedThreshold;
 
                 if (currentSimSpeed < threshold)
                 {

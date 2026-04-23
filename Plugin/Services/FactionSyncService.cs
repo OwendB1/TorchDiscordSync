@@ -79,7 +79,7 @@ namespace TorchDiscordSync.Plugin.Services
 
                 try
                 {
-                    bool deleted = await _discord.DeleteChannelAsync(trackedChannel.ChannelID).ConfigureAwait(false);
+                    var deleted = await _discord.DeleteChannelAsync(trackedChannel.ChannelID).ConfigureAwait(false);
                     trackedChannel.DeletedOnUndo = true;
 
                     if (deleted)
@@ -168,11 +168,11 @@ namespace TorchDiscordSync.Plugin.Services
                     {
                         foreach (var memberKvp in faction.Members)
                         {
-                            long playerId = memberKvp.Key;
+                            var playerId = memberKvp.Key;
                             var memberData = memberKvp.Value;
 
                             // Map playerId to SteamID
-                            ulong steamId = MyAPIGateway.Players.TryGetSteamId(playerId);
+                            var steamId = MyAPIGateway.Players.TryGetSteamId(playerId);
 
                             if (steamId == 0)
                             {
@@ -183,7 +183,7 @@ namespace TorchDiscordSync.Plugin.Services
                             }
 
                             // Get player name
-                            string playerName = GetPlayerName(playerId);
+                            var playerName = GetPlayerName(playerId);
 
                             // Create faction member model
                             var factionPlayer = new FactionPlayerModel
@@ -360,7 +360,7 @@ namespace TorchDiscordSync.Plugin.Services
                     {
                         // FIX: Before creating, check if role with same tag already exists
                         // on Discord (prevents duplicates when XML db is missing/empty).
-                        ulong existingRoleId = _discord.FindRoleByName(dbFaction.Tag);
+                        var existingRoleId = _discord.FindRoleByName(dbFaction.Tag);
                         if (existingRoleId > 0)
                         {
                             LoggerUtil.LogInfo(
@@ -403,12 +403,12 @@ namespace TorchDiscordSync.Plugin.Services
                     // ============================================================
                     if (dbFaction.DiscordChannelID == 0)
                     {
-                        string channelName =
+                        var channelName =
                             (gameFaction.Name != null ? gameFaction.Name : dbFaction.Tag)
                                 .ToLower();
 
                         // FIX: Check if text channel with same name already exists on Discord
-                        ulong existingChannelId = _discord.FindTextChannelByName(channelName);
+                        var existingChannelId = _discord.FindTextChannelByName(channelName);
                         if (existingChannelId > 0)
                         {
                             LoggerUtil.LogInfo(
@@ -456,9 +456,9 @@ namespace TorchDiscordSync.Plugin.Services
                     // ============================================================
                     // Create voice channels if enabled (same name lowcase, same role)
                     // ============================================================
-                    string lowcaseName = (gameFaction.Name != null ? gameFaction.Name : dbFaction.Tag).ToLower();
+                    var lowcaseName = (gameFaction.Name != null ? gameFaction.Name : dbFaction.Tag).ToLower();
                     ulong? catId = _config.Discord.FactionCategoryId;
-                    ulong? roleId = dbFaction.DiscordRoleID > 0 ? (ulong?)dbFaction.DiscordRoleID : null;
+                    var roleId = dbFaction.DiscordRoleID > 0 ? (ulong?)dbFaction.DiscordRoleID : null;
 
                     if (_config.Faction.AutoCreateVoice)
                     {
@@ -857,7 +857,7 @@ namespace TorchDiscordSync.Plugin.Services
                 {
                     try
                     {
-                        bool roleDeleted = await _discord.DeleteRoleAsync(faction.DiscordRoleID).ConfigureAwait(false);
+                        var roleDeleted = await _discord.DeleteRoleAsync(faction.DiscordRoleID).ConfigureAwait(false);
                         if (roleDeleted)
                         {
                             result.AppendLine($"✓ Deleted Discord role: {faction.DiscordRoleName}");
@@ -884,7 +884,7 @@ namespace TorchDiscordSync.Plugin.Services
                 {
                     try
                     {
-                        bool channelDeleted = await _discord.DeleteChannelAsync(faction.DiscordChannelID).ConfigureAwait(false);
+                        var channelDeleted = await _discord.DeleteChannelAsync(faction.DiscordChannelID).ConfigureAwait(false);
                         if (channelDeleted)
                         {
                             result.AppendLine($"✓ Deleted Discord channel: {faction.DiscordChannelName}");
@@ -961,7 +961,7 @@ namespace TorchDiscordSync.Plugin.Services
                 var result = new System.Text.StringBuilder();
                 result.AppendLine($"[CLEANUP] Found {orphaned.Count} orphaned syncs");
 
-                int cleaned = 0;
+                var cleaned = 0;
 
                 foreach (var faction in orphaned)
                 {
@@ -970,7 +970,7 @@ namespace TorchDiscordSync.Plugin.Services
                         // Delete role if exists
                         if (faction.DiscordRoleID > 0)
                         {
-                            bool deleted = await _discord.DeleteRoleAsync(faction.DiscordRoleID).ConfigureAwait(false);
+                            var deleted = await _discord.DeleteRoleAsync(faction.DiscordRoleID).ConfigureAwait(false);
                             if (deleted)
                             {
                                 result.AppendLine($"✓ Deleted orphaned role: {faction.DiscordRoleName}");
@@ -981,7 +981,7 @@ namespace TorchDiscordSync.Plugin.Services
                         // Delete channel if exists
                         if (faction.DiscordChannelID > 0)
                         {
-                            bool deleted = await _discord.DeleteChannelAsync(faction.DiscordChannelID).ConfigureAwait(false);
+                            var deleted = await _discord.DeleteChannelAsync(faction.DiscordChannelID).ConfigureAwait(false);
                             if (deleted)
                             {
                                 result.AppendLine($"✓ Deleted orphaned channel: {faction.DiscordChannelName}");
@@ -991,7 +991,7 @@ namespace TorchDiscordSync.Plugin.Services
 
                         if (faction.DiscordVoiceChannelID > 0)
                         {
-                            bool deleted = await _discord.DeleteChannelAsync(faction.DiscordVoiceChannelID).ConfigureAwait(false);
+                            var deleted = await _discord.DeleteChannelAsync(faction.DiscordVoiceChannelID).ConfigureAwait(false);
                             if (deleted)
                             {
                                 result.AppendLine($"✓ Deleted orphaned voice channel: {faction.DiscordVoiceChannelName}");
@@ -1065,7 +1065,7 @@ namespace TorchDiscordSync.Plugin.Services
                     {
                         try
                         {
-                            bool deletedRole = await _discord.DeleteRoleAsync(faction.DiscordRoleID).ConfigureAwait(false);
+                            var deletedRole = await _discord.DeleteRoleAsync(faction.DiscordRoleID).ConfigureAwait(false);
                             if (deletedRole)
                             {
                                 result.AppendLine("  ✓ Deleted role ID: " + faction.DiscordRoleID);
@@ -1111,7 +1111,7 @@ namespace TorchDiscordSync.Plugin.Services
                     {
                         try
                         {
-                            bool deletedChannel = await _discord.DeleteChannelAsync(
+                            var deletedChannel = await _discord.DeleteChannelAsync(
                                 faction.DiscordChannelID
                             ).ConfigureAwait(false);
                             if (deletedChannel)
@@ -1160,7 +1160,7 @@ namespace TorchDiscordSync.Plugin.Services
                     {
                         try
                         {
-                            bool deletedVoice = await _discord.DeleteChannelAsync(
+                            var deletedVoice = await _discord.DeleteChannelAsync(
                                 faction.DiscordVoiceChannelID
                             ).ConfigureAwait(false);
                             if (deletedVoice)
@@ -1253,13 +1253,13 @@ namespace TorchDiscordSync.Plugin.Services
                     return "No factions in database";
                 }
 
-                int synced = allFactions.Count(f => f.SyncStatus == "Synced");
-                int pending = allFactions.Count(f => f.SyncStatus == "Pending");
-                int failed = allFactions.Count(f => f.SyncStatus == "Failed");
-                int orphaned = allFactions.Count(f => f.SyncStatus == "Orphaned");
-                int total = allFactions.Count;
+                var synced = allFactions.Count(f => f.SyncStatus == "Synced");
+                var pending = allFactions.Count(f => f.SyncStatus == "Pending");
+                var failed = allFactions.Count(f => f.SyncStatus == "Failed");
+                var orphaned = allFactions.Count(f => f.SyncStatus == "Orphaned");
+                var total = allFactions.Count;
 
-                string status = $"Sync Status: {synced}/{total} synced | {pending} pending | {failed} failed | {orphaned} orphaned";
+                var status = $"Sync Status: {synced}/{total} synced | {pending} pending | {failed} failed | {orphaned} orphaned";
 
                 LoggerUtil.LogInfo($"[ADMIN:SYNC:STATUS] {status}");
                 return status;

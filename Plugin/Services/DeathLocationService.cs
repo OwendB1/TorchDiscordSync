@@ -63,14 +63,14 @@ namespace TorchDiscordSync.Plugin.Services
                     return result;
                 }
 
-                Vector3D deathPosition = character.GetPosition();
+                var deathPosition = character.GetPosition();
                 result.DistanceFromOrigin = Vector3D.Distance(deathPosition, ORIGIN);
 
                 // STEP 1: Check if death is near a planet (priority)
                 var nearestPlanet = FindNearestPlanet(deathPosition);
                 if (nearestPlanet != null)
                 {
-                    double distanceToPlanet = Vector3D.Distance(
+                    var distanceToPlanet = Vector3D.Distance(
                         deathPosition,
                         nearestPlanet.PositionComp.GetPosition()
                     );
@@ -87,7 +87,7 @@ namespace TorchDiscordSync.Plugin.Services
                     );
 
                     // CRITICAL: Determine if on surface or in orbit
-                    double distanceRatio = distanceToPlanet / planetRadius;
+                    var distanceRatio = distanceToPlanet / planetRadius;
 
                     if (distanceRatio <= SURFACE_MULTIPLIER)
                     {
@@ -201,8 +201,8 @@ namespace TorchDiscordSync.Plugin.Services
                 if (!string.IsNullOrEmpty(planet.StorageName))
                 {
                     // StorageName often has UUID suffix - try to clean it
-                    string storageName = planet.StorageName;
-                    int dashIndex = storageName.IndexOf('-');
+                    var storageName = planet.StorageName;
+                    var dashIndex = storageName.IndexOf('-');
                     if (dashIndex > 0)
                         storageName = storageName.Substring(0, dashIndex);
 
@@ -264,7 +264,7 @@ namespace TorchDiscordSync.Plugin.Services
 
             try
             {
-                string zoneText = GetZoneDescription(zoneResult);
+                var zoneText = GetZoneDescription(zoneResult);
 
                 if (
                     includeGridName
@@ -431,14 +431,14 @@ namespace TorchDiscordSync.Plugin.Services
                     return null;
 
                 MyPlanet nearest = null;
-                double nearestDistance = double.MaxValue;
+                var nearestDistance = double.MaxValue;
 
                 foreach (var planet in planets)
                 {
                     if (planet == null)
                         continue;
 
-                    double distance = Vector3D.Distance(
+                    var distance = Vector3D.Distance(
                         position,
                         planet.PositionComp.GetPosition()
                     );

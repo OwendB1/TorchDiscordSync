@@ -129,7 +129,7 @@ namespace TorchDiscordSync.Plugin.Utils
             try
             {
                 // Remove all non-printable-ASCII characters (includes emoji, icons, etc.)
-                string sanitized = Regex.Replace(playerName, @"[^\x20-\x7E]", "");
+                var sanitized = Regex.Replace(playerName, @"[^\x20-\x7E]", "");
 
                 // Remove remaining control characters
                 sanitized = Regex.Replace(sanitized, @"[\x00-\x1F\x7F]", "");
@@ -168,7 +168,7 @@ namespace TorchDiscordSync.Plugin.Utils
             try
             {
                 // Remove control characters only; keep Unicode letters/symbols
-                string sanitized = Regex.Replace(message, @"[\x00-\x1F\x7F]", "");
+                var sanitized = Regex.Replace(message, @"[\x00-\x1F\x7F]", "");
                 return sanitized.Trim();
             }
             catch (Exception ex)
@@ -202,7 +202,7 @@ namespace TorchDiscordSync.Plugin.Utils
                 text = Regex.Replace(text, @"<a?:(\w+):\d+>", ":$1:");
 
                 // --- Step 3: Replace known emoji with ASCII equivalents ---
-                foreach (KeyValuePair<string, string> pair in _emojiAsciiMap)
+                foreach (var pair in _emojiAsciiMap)
                     text = text.Replace(pair.Key, " " + pair.Value + " ");
 
                 // --- Step 4: Remove remaining astral-plane characters ---

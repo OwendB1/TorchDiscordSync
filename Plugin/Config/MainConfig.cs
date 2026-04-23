@@ -1,4 +1,5 @@
 // Plugin/Config/MainConfig.cs
+
 using System;
 using System.IO;
 using System.Xml;
@@ -28,12 +29,12 @@ namespace TorchDiscordSync.Plugin.Config
         public static string GetInstancePath()
         {
             // Try to get from environment variable set by Torch
-            string instancePath = Environment.GetEnvironmentVariable("TORCH_INSTANCE_PATH");
+            var instancePath = Environment.GetEnvironmentVariable("TORCH_INSTANCE_PATH");
 
             // Fallback to default location if not set
             if (string.IsNullOrEmpty(instancePath))
             {
-                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                var baseDir = AppDomain.CurrentDomain.BaseDirectory;
                 instancePath = Path.Combine(baseDir, "Instance");
             }
 
@@ -46,7 +47,7 @@ namespace TorchDiscordSync.Plugin.Config
         /// </summary>
         public static string GetPluginDirectory()
         {
-            string pluginDir = Path.Combine(GetInstancePath(), PLUGIN_DIR_NAME);
+            var pluginDir = Path.Combine(GetInstancePath(), PLUGIN_DIR_NAME);
 
             // Ensure directory exists
             if (!Directory.Exists(pluginDir))
@@ -72,7 +73,7 @@ namespace TorchDiscordSync.Plugin.Config
         /// </summary>
         public static string GetConfigDirectory()
         {
-            string configDir = Path.Combine(GetPluginDirectory(), "configs");
+            var configDir = Path.Combine(GetPluginDirectory(), "configs");
 
             if (!Directory.Exists(configDir))
             {
@@ -97,7 +98,7 @@ namespace TorchDiscordSync.Plugin.Config
         /// </summary>
         public static string GetDataDirectory()
         {
-            string dataDir = Path.Combine(GetPluginDirectory(), "data");
+            var dataDir = Path.Combine(GetPluginDirectory(), "data");
 
             if (!Directory.Exists(dataDir))
             {
@@ -122,7 +123,7 @@ namespace TorchDiscordSync.Plugin.Config
         /// </summary>
         public static string GetLogDirectory()
         {
-            string logDir = Path.Combine(GetPluginDirectory(), "Logging");
+            var logDir = Path.Combine(GetPluginDirectory(), "Logging");
 
             if (!Directory.Exists(logDir))
             {
@@ -207,16 +208,70 @@ namespace TorchDiscordSync.Plugin.Config
         {
             Enabled = true;
             Debug = false;
-            AdminSteamIDs = new long[] { 
-                76561198020205461, // Replace with actual admin SteamIDs
-                76561198000000001  // Add actual admin SteamIDs here
-                };
+            AdminSteamIDs =
+            [
+                10000000000000001, // Replace with actual admin SteamIDs
+                10000000000000002  // Add actual admin SteamIDs here
+            ];
             Discord = new DiscordConfig();
             Chat = new ChatConfig();
             Death = new DeathConfig();
             Monitoring = new MonitoringConfig();
             Faction = new FactionConfig();
             DataStorage = new DataStorageConfig();
+        }
+
+        public void EnsureDefaults()
+        {
+            AdminSteamIDs ??= Array.Empty<long>();
+            Discord ??= new DiscordConfig();
+            Chat ??= new ChatConfig();
+            Death ??= new DeathConfig();
+            Monitoring ??= new MonitoringConfig();
+            Faction ??= new FactionConfig();
+            DataStorage ??= new DataStorageConfig();
+
+            if (Discord.SyncIntervalSeconds <= 0)
+                Discord.SyncIntervalSeconds = 30;
+            if (Discord.PresenceUpdateIntervalSeconds <= 0)
+                Discord.PresenceUpdateIntervalSeconds = 1;
+            if (CleanupIntervalSeconds <= 0)
+                CleanupIntervalSeconds = 30;
+            if (DamageHistoryMaxSeconds <= 0)
+                DamageHistoryMaxSeconds = 15;
+        }
+
+        public MainConfig Clone()
+        {
+            var serializer = new XmlSerializer(typeof(MainConfig));
+            using (var ms = new MemoryStream())
+            {
+                serializer.Serialize(ms, this);
+                ms.Position = 0;
+
+                var clone = (MainConfig)serializer.Deserialize(ms);
+                clone?.EnsureDefaults();
+                return clone ?? new MainConfig();
+            }
+        }
+
+        public void ApplyFrom(MainConfig source)
+        {
+            var detached = (source ?? new MainConfig()).Clone();
+
+            Enabled = detached.Enabled;
+            Debug = detached.Debug;
+            AdminSteamIDs = detached.AdminSteamIDs ?? Array.Empty<long>();
+            Discord = detached.Discord ?? new DiscordConfig();
+            Chat = detached.Chat ?? new ChatConfig();
+            Death = detached.Death ?? new DeathConfig();
+            Monitoring = detached.Monitoring ?? new MonitoringConfig();
+            Faction = detached.Faction ?? new FactionConfig();
+            CleanupIntervalSeconds = detached.CleanupIntervalSeconds;
+            DamageHistoryMaxSeconds = detached.DamageHistoryMaxSeconds;
+            DataStorage = detached.DataStorage ?? new DataStorageConfig();
+
+            EnsureDefaults();
         }
 
         // Updated Load method to use correct path
@@ -226,29 +281,24 @@ namespace TorchDiscordSync.Plugin.Config
             {
                 if (File.Exists(ConfigPath))
                 {
-                    int legacyRootSyncInterval = TryReadLegacyRootSyncInterval();
-                    XmlSerializer serializer = new XmlSerializer(typeof(MainConfig));
-                    using (FileStream fs = new FileStream(ConfigPath, FileMode.Open))
+                    var legacyRootSyncInterval = TryReadLegacyRootSyncInterval();
+                    var serializer = new XmlSerializer(typeof(MainConfig));
+                    using (var fs = new FileStream(ConfigPath, FileMode.Open))
                     {
-                        MainConfig config = (MainConfig)serializer.Deserialize(fs);
+                        var config = (MainConfig)serializer.Deserialize(fs);
                         if (config == null) return new MainConfig();
 
-                        if (config.Discord == null)
-                            config.Discord = new DiscordConfig();
+                        config.EnsureDefaults();
 
                         if (config.Discord.SyncIntervalSeconds <= 0 && legacyRootSyncInterval > 0)
                             config.Discord.SyncIntervalSeconds = legacyRootSyncInterval;
-                        if (config.Discord.SyncIntervalSeconds <= 0)
-                            config.Discord.SyncIntervalSeconds = 30;
-                        if (config.Discord.PresenceUpdateIntervalSeconds <= 0)
-                            config.Discord.PresenceUpdateIntervalSeconds = 1;
 
                         return config;
                     }
                 }
                 else
                 {
-                    MainConfig config = new MainConfig();
+                    var config = new MainConfig();
                     config.Save();
                     return config;
                 }
@@ -278,27 +328,36 @@ namespace TorchDiscordSync.Plugin.Config
             }
         }
 
-        // Updated Save method to use correct path
-        public void Save()
+        public bool TrySave(out string error)
         {
             try
             {
                 // Use the updated ConfigPath property
-                string dir = Path.GetDirectoryName(ConfigPath);
+                var dir = Path.GetDirectoryName(ConfigPath);
                 if (!Directory.Exists(dir))
-                    Directory.CreateDirectory(dir);
+                    if (dir != null) Directory.CreateDirectory(dir);
 
-                XmlSerializer serializer = new XmlSerializer(typeof(MainConfig));
-                using (FileStream fs = new FileStream(ConfigPath, FileMode.Create))
+                var serializer = new XmlSerializer(typeof(MainConfig));
+                using (var fs = new FileStream(ConfigPath, FileMode.Create))
                 {
                     serializer.Serialize(fs, this);
                 }
                 LoggerUtil.LogSuccess("MainConfig saved successfully");
+                error = null;
+                return true;
             }
             catch (Exception ex)
             {
                 LoggerUtil.LogException("Failed to save MainConfig.", ex);
+                error = ex.Message;
+                return false;
             }
+        }
+
+        // Updated Save method to use correct path
+        public void Save()
+        {
+            TrySave(out _);
         }
     }
 
@@ -362,8 +421,8 @@ namespace TorchDiscordSync.Plugin.Config
             SimSpeedChannelId = 0;
             PlayerCountChannelId = 0;
             FactionCategoryId = 0;
-            AdminAlertChannelId = 1470032530139906178;
-            AdminBotChannelId   = 1478357809044131980;
+            AdminAlertChannelId = 0;
+            AdminBotChannelId   = 0;
             PresenceUpdateIntervalSeconds = 1;
         }
     }

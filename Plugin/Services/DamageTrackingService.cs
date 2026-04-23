@@ -136,7 +136,7 @@ namespace TorchDiscordSync.Plugin.Services
             _enableLogging = enableLogging;
 
             // Setup logging path
-            string dataDir = MainConfig.GetDataDirectory();
+            var dataDir = MainConfig.GetDataDirectory();
             _damageLogPath = Path.Combine(dataDir, "DamageHistory.xml");
         }
 
@@ -179,12 +179,12 @@ namespace TorchDiscordSync.Plugin.Services
             try
             {
                 // Only track damage to characters
-                IMyCharacter character = victim as IMyCharacter;
+                var character = victim as IMyCharacter;
                 if (character == null)
                     return;
 
                 // Get attacker entity
-                IMyEntity attackerEntity = MyAPIGateway.Entities.GetEntityById(info.AttackerId);
+                var attackerEntity = MyAPIGateway.Entities.GetEntityById(info.AttackerId);
                 if (attackerEntity == null)
                     return;
 
@@ -220,7 +220,7 @@ namespace TorchDiscordSync.Plugin.Services
                     }
 
                     // Add to buffer and advance position
-                    int index = _bufferIndices[character.EntityId];
+                    var index = _bufferIndices[character.EntityId];
                     _damageHistory[character.EntityId][index] = record;
                     _bufferIndices[character.EntityId] = (index + 1) % BUFFER_SIZE;
                 }
@@ -262,7 +262,7 @@ namespace TorchDiscordSync.Plugin.Services
                     var cutoffTime = DateTime.Now.AddSeconds(-secondsBack);
 
                     // Search backwards from most recent (most recent = last in buffer)
-                    for (int i = BUFFER_SIZE - 1; i >= 0; i--)
+                    for (var i = BUFFER_SIZE - 1; i >= 0; i--)
                     {
                         var record = records[i];
                         if (record != null && record.Timestamp >= cutoffTime)
@@ -371,10 +371,10 @@ namespace TorchDiscordSync.Plugin.Services
                     // Go through each victim's history
                     foreach (var kvp in _damageHistory)
                     {
-                        bool allNull = true;
+                        var allNull = true;
 
                         // Mark old records as null
-                        for (int i = 0; i < kvp.Value.Length; i++)
+                        for (var i = 0; i < kvp.Value.Length; i++)
                         {
                             if (kvp.Value[i] != null && kvp.Value[i].Timestamp < cutoffTime)
                             {
@@ -445,7 +445,7 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                long ownerId = ExtractOwnerId(entity);
+                var ownerId = ExtractOwnerId(entity);
                 if (ownerId == 0)
                     return null;
 
@@ -466,7 +466,7 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                long ownerId = ExtractOwnerId(entity);
+                var ownerId = ExtractOwnerId(entity);
                 if (ownerId == 0)
                     return null;
 

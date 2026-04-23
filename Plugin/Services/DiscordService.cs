@@ -62,10 +62,10 @@ namespace TorchDiscordSync.Plugin.Services
                 if (channelID == 0 || _botService == null)
                     return false;
 
-                bool allSent = true;
-                foreach (string chunk in SplitDiscordMessage(message))
+                var allSent = true;
+                foreach (var chunk in SplitDiscordMessage(message))
                 {
-                    bool sent = await _botService.SendChannelMessageAsync(channelID, chunk)
+                    var sent = await _botService.SendChannelMessageAsync(channelID, chunk)
                         .ConfigureAwait(false);
                     allSent = allSent && sent;
                     if (!sent)
@@ -89,9 +89,9 @@ namespace TorchDiscordSync.Plugin.Services
                 yield break;
             }
 
-            for (int index = 0; index < message.Length; index += DISCORD_MESSAGE_MAX_LENGTH)
+            for (var index = 0; index < message.Length; index += DISCORD_MESSAGE_MAX_LENGTH)
             {
-                int length = Math.Min(DISCORD_MESSAGE_MAX_LENGTH, message.Length - index);
+                var length = Math.Min(DISCORD_MESSAGE_MAX_LENGTH, message.Length - index);
                 yield return message.Substring(index, length);
             }
         }

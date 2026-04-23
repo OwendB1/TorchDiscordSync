@@ -65,7 +65,7 @@ namespace TorchDiscordSync.Plugin.Services
                 if (!CheckRateLimit(playerName + "_game"))
                     return;
 
-                string messageKey = playerName + ":" + message;
+                var messageKey = playerName + ":" + message;
                 if (_syncedMessages.Contains(messageKey))
                 {
                     LoggerUtil.LogDebug("Chat: duplicate game message suppressed");
@@ -75,18 +75,18 @@ namespace TorchDiscordSync.Plugin.Services
                 _syncedMessages.Add(messageKey);
                 TrimSyncedMessages();
 
-                string discordMessage = FormatGameMessageForDiscord(playerName, message);
+                var discordMessage = FormatGameMessageForDiscord(playerName, message);
                 if (string.IsNullOrWhiteSpace(discordMessage) || discordMessage.StartsWith("/"))
                     return;
 
-                ulong targetChannel = _config?.Discord?.ChatChannelId ?? 0;
+                var targetChannel = _config?.Discord?.ChatChannelId ?? 0;
                 if (targetChannel == 0)
                 {
                     LoggerUtil.LogWarning("Chat: no Discord ChatChannelId configured");
                     return;
                 }
 
-                bool sent = await _discord.SendLogAsync(targetChannel, discordMessage);
+                var sent = await _discord.SendLogAsync(targetChannel, discordMessage);
                 if (sent)
                 {
                     LoggerUtil.LogInfo(
@@ -142,7 +142,7 @@ namespace TorchDiscordSync.Plugin.Services
                         return;
                     }
 
-                    string gameMessage = FormatDiscordMessageForGame(discordUsername, message);
+                    var gameMessage = FormatDiscordMessageForGame(discordUsername, message);
 
                     LoggerUtil.LogInfo(
                         string.Format(
@@ -211,8 +211,8 @@ namespace TorchDiscordSync.Plugin.Services
                 }
 
                 // Strip emoji before delivering to in-game chat
-                string cleanMessage = StripEmojisIfEnabled(message);
-                string factionMsg = string.Format(
+                var cleanMessage = StripEmojisIfEnabled(message);
+                var factionMsg = string.Format(
                     "[Discord] {0}: {1}",
                     discordUsername,
                     cleanMessage
@@ -221,7 +221,7 @@ namespace TorchDiscordSync.Plugin.Services
                 var players = new List<IMyPlayer>();
                 MyAPIGateway.Players.GetPlayers(players);
 
-                int sent = 0;
+                var sent = 0;
                 LoggerUtil.LogInfo(
                     $"[CHAT_DEBUG] Discord→Faction: sending to {faction.Players.Count} faction members"
                 );
@@ -290,7 +290,7 @@ namespace TorchDiscordSync.Plugin.Services
                     {
                         try
                         {
-                            string broadcastMsg = string.Format(
+                            var broadcastMsg = string.Format(
                                 "[{0} Discord] {1}: {2}",
                                 faction.Tag,
                                 discordUsername,
@@ -375,7 +375,7 @@ namespace TorchDiscordSync.Plugin.Services
                 if (string.IsNullOrWhiteSpace(authorName) || string.IsNullOrWhiteSpace(message))
                     return;
 
-                string discordText = $"{authorName}: {message}";
+                var discordText = $"{authorName}: {message}";
                 if (discordText.Length > GAME_TO_DISCORD_MAX_LENGTH)
                     discordText = discordText.Substring(0, GAME_TO_DISCORD_MAX_LENGTH - 3) + "...";
 
@@ -388,7 +388,7 @@ namespace TorchDiscordSync.Plugin.Services
                     )
                 );
 
-                bool sent = await _discord.SendLogAsync(faction.DiscordChannelID, discordText);
+                var sent = await _discord.SendLogAsync(faction.DiscordChannelID, discordText);
                 if (sent)
                     LoggerUtil.LogInfo(
                         string.Format(
@@ -446,11 +446,11 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                string cleanMessage = CleanMessageText(message);
+                var cleanMessage = CleanMessageText(message);
                 if (cleanMessage.StartsWith("/"))
                     return null;
 
-                string formatted = $"{playerName}: {cleanMessage}";
+                var formatted = $"{playerName}: {cleanMessage}";
                 if (formatted.Length > GAME_TO_DISCORD_MAX_LENGTH)
                     formatted = formatted.Substring(0, GAME_TO_DISCORD_MAX_LENGTH - 3) + "...";
 
@@ -473,7 +473,7 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                string cleanMessage = CleanMessageText(message);
+                var cleanMessage = CleanMessageText(message);
 
                 // Limit length for in-game chat readability
                 if (cleanMessage.Length > DISCORD_TO_GAME_MAX_LENGTH)
@@ -547,7 +547,7 @@ namespace TorchDiscordSync.Plugin.Services
                     return true;
                 }
 
-                int msSinceLast = (int)(DateTime.UtcNow - lastTime).TotalMilliseconds;
+                var msSinceLast = (int)(DateTime.UtcNow - lastTime).TotalMilliseconds;
                 if (msSinceLast < MESSAGE_THROTTLE_MS)
                     return false;
 
@@ -571,7 +571,7 @@ namespace TorchDiscordSync.Plugin.Services
                 var arr = new string[_syncedMessages.Count];
                 _syncedMessages.CopyTo(arr);
                 _syncedMessages.Clear();
-                for (int i = arr.Length / 2; i < arr.Length; i++)
+                for (var i = arr.Length / 2; i < arr.Length; i++)
                     _syncedMessages.Add(arr[i]);
             }
         }

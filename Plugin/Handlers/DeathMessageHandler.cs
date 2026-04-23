@@ -83,7 +83,7 @@ namespace TorchDiscordSync.Plugin.Handlers
                 // STEP 1: Sanitize player name
                 // Remove special characters and emoticons
                 // ────────────────────────────────────────────────────────────────
-                string sanitizedName = TextSanitizationUtil.SanitizePlayerName(playerName);
+                var sanitizedName = TextSanitizationUtil.SanitizePlayerName(playerName);
                 LoggerUtil.LogInfo($"[DEATH] ═══ Processing death for: {sanitizedName} ═══");
 
                 // ────────────────────────────────────────────────────────────────
@@ -124,7 +124,7 @@ namespace TorchDiscordSync.Plugin.Handlers
                 // STEP 4: Generate death message
                 // Creates contextual message based on killer, location, and cause
                 // ────────────────────────────────────────────────────────────────
-                string deathMessage = GenerateDeathMessage(sanitizedName, killerInfo, locationInfo);
+                var deathMessage = GenerateDeathMessage(sanitizedName, killerInfo, locationInfo);
                 LoggerUtil.LogInfo($"[DEATH] Generated: {deathMessage}");
 
                 // ────────────────────────────────────────────────────────────────
@@ -135,7 +135,7 @@ namespace TorchDiscordSync.Plugin.Handlers
                 // ────────────────────────────────────────────────────────────────
                 // STEP 6: Send to Discord
                 // ────────────────────────────────────────────────────────────────
-                string discordMessage = AddEmotePrefix(deathMessage);
+                var discordMessage = AddEmotePrefix(deathMessage);
                 await SendToDiscordAsync(discordMessage);
 
                 LoggerUtil.LogSuccess($"[DEATH] ═══ Complete for {sanitizedName} ═══");
@@ -163,30 +163,30 @@ namespace TorchDiscordSync.Plugin.Handlers
             try
             {
                 // Determine death type based on killer info
-                DeathTypeEnum deathType = DetermineDeathType(killerInfo);
+                var deathType = DetermineDeathType(killerInfo);
 
                 // Get random message template for this death type
-                string template = _deathMessagesConfig.GetRandomMessage(deathType);
+                var template = _deathMessagesConfig.GetRandomMessage(deathType);
 
                 // Build message from template
-                string message = template;
+                var message = template;
 
                 // Replace victim (sanitized name)
                 message = message.Replace("{victim}", victimName);
                 message = message.Replace("{1}", victimName);
 
                 // Replace killer name
-                string killerName = GetKillerDisplayName(killerInfo);
+                var killerName = GetKillerDisplayName(killerInfo);
                 message = message.Replace("{killer}", killerName);
                 message = message.Replace("{0}", killerName);
 
                 // Replace weapon name
-                string weaponName = GetWeaponDisplayName(killerInfo);
+                var weaponName = GetWeaponDisplayName(killerInfo);
                 message = message.Replace("{weapon}", weaponName);
                 message = message.Replace("{2}", weaponName);
 
                 // Add location information
-                string locationText = GenerateLocationText(locationInfo);
+                var locationText = GenerateLocationText(locationInfo);
                 if (!string.IsNullOrEmpty(locationText))
                 {
                     message = $"{message} {locationText}";
@@ -288,7 +288,7 @@ namespace TorchDiscordSync.Plugin.Handlers
 
             try
             {
-                bool showGridName = _config?.Death?.ShowGridName ?? true;
+                var showGridName = _config?.Death?.ShowGridName ?? true;
                 return _locationService.GenerateLocationText(locationInfo, showGridName);
             }
             catch (Exception ex)
@@ -370,7 +370,7 @@ namespace TorchDiscordSync.Plugin.Handlers
                     return $"💀 {message}";
 
                 // Select random emote
-                string randomEmote = emotes[new Random().Next(emotes.Length)].Trim();
+                var randomEmote = emotes[new Random().Next(emotes.Length)].Trim();
                 return $"{randomEmote} {message}";
             }
             catch

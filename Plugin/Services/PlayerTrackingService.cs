@@ -132,13 +132,13 @@ namespace TorchDiscordSync.Plugin.Services
 
             lock (_lockObject)
             {
-                long newEntityId = character.EntityId;
+                var newEntityId = character.EntityId;
 
                 // Check if we already have this exact character hooked
                 if (_trackedCharacters.ContainsKey(steamId))
                 {
                     var existing = _trackedCharacters[steamId];
-                    long oldEntityId = _trackedCharacterEntityIds.GetValueOrDefault(steamId, 0);
+                    var oldEntityId = _trackedCharacterEntityIds.GetValueOrDefault(steamId, 0);
 
                     if (existing == character && oldEntityId == newEntityId)
                     {
@@ -201,7 +201,7 @@ namespace TorchDiscordSync.Plugin.Services
             MyAPIGateway.Players.GetPlayers(currentPlayers);
 
             var currentSteamIds = new HashSet<ulong>();
-            bool onlinePlayersChanged = false;
+            var onlinePlayersChanged = false;
             foreach (var player in currentPlayers)
             {
                 currentSteamIds.Add(player.SteamUserId);
@@ -247,7 +247,7 @@ namespace TorchDiscordSync.Plugin.Services
                     _deathEventCounters.Remove(steamId);
                 }
 
-                string playerName = _playerNames.TryGetValue(steamId, out var name)
+                var playerName = _playerNames.TryGetValue(steamId, out var name)
                     ? name
                     : steamId.ToString();
                 _playerNames.Remove(steamId);
@@ -285,7 +285,7 @@ namespace TorchDiscordSync.Plugin.Services
                 if (player?.Character == null)
                     continue;
 
-                string playerName = player.DisplayName;
+                var playerName = player.DisplayName;
 
                 lock (_lockObject)
                 {
@@ -301,8 +301,8 @@ namespace TorchDiscordSync.Plugin.Services
                     {
                         // Existing player - check if character changed (respawn)
                         var oldCharacter = _trackedCharacters[player.SteamUserId];
-                        long oldEntityId = _trackedCharacterEntityIds.GetValueOrDefault(player.SteamUserId, 0);
-                        long newEntityId = player.Character.EntityId;
+                        var oldEntityId = _trackedCharacterEntityIds.GetValueOrDefault(player.SteamUserId, 0);
+                        var newEntityId = player.Character.EntityId;
 
                         // CRITICAL: Re-hook if EntityID changed OR if character reference changed
                         if (oldCharacter != player.Character || oldEntityId != newEntityId)
@@ -325,14 +325,14 @@ namespace TorchDiscordSync.Plugin.Services
             try
             {
                 // Increment death counter for debugging
-                int deathCount = 0;
+                var deathCount = 0;
                 lock (_lockObject)
                 {
                     _deathEventCounters[steamId] = _deathEventCounters.GetValueOrDefault(steamId, 0) + 1;
                     deathCount = _deathEventCounters[steamId];
                 }
 
-                string playerName = deadCharacter?.DisplayName ?? originalPlayerName;
+                var playerName = deadCharacter?.DisplayName ?? originalPlayerName;
 
                 LoggerUtil.LogInfo($"[DEATH_EVENT #{deathCount}] ═══════════════════════════════════════");
                 LoggerUtil.LogInfo($"[DEATH_EVENT #{deathCount}] Player: {playerName}");
@@ -340,10 +340,10 @@ namespace TorchDiscordSync.Plugin.Services
 
                 if (deadCharacter != null)
                 {
-                    Vector3D position = deadCharacter.GetPosition();
-                    long entityId = deadCharacter.EntityId;
-                    bool isClosed = deadCharacter.Closed;
-                    bool isMarkedForClose = deadCharacter.MarkedForClose;
+                    var position = deadCharacter.GetPosition();
+                    var entityId = deadCharacter.EntityId;
+                    var isClosed = deadCharacter.Closed;
+                    var isMarkedForClose = deadCharacter.MarkedForClose;
 
                     LoggerUtil.LogInfo($"[DEATH_EVENT #{deathCount}] EntityID: {entityId}");
                     LoggerUtil.LogInfo($"[DEATH_EVENT #{deathCount}] Position: X={position.X:F1}, Y={position.Y:F1}, Z={position.Z:F1}");
@@ -443,7 +443,7 @@ namespace TorchDiscordSync.Plugin.Services
             if (!TryRememberChatEvent("leave", playerName))
                 return;
 
-            ulong steamId = FindKnownSteamIdByName(playerName);
+            var steamId = FindKnownSteamIdByName(playerName);
             LoggerUtil.LogInfo($"[TRACKING] Chat-driven leave detected: {playerName} ({steamId})");
             if (_eventLog != null)
                 _ = _eventLog.LogPlayerLeaveAsync(playerName, steamId, false);
@@ -478,7 +478,7 @@ namespace TorchDiscordSync.Plugin.Services
         private bool TryExtractPlayerEvent(string message, string pattern, out string playerName)
         {
             playerName = null;
-            string normalized = NormalizeSystemChatMessage(message);
+            var normalized = NormalizeSystemChatMessage(message);
             var match = Regex.Match(normalized, pattern, RegexOptions.IgnoreCase);
             if (!match.Success)
                 return false;
@@ -489,7 +489,7 @@ namespace TorchDiscordSync.Plugin.Services
 
         private static string NormalizeSystemChatMessage(string message)
         {
-            string text = (message ?? string.Empty).Trim();
+            var text = (message ?? string.Empty).Trim();
             text = text.Replace(":sunny:", string.Empty);
             text = text.Replace(":new_moon:", string.Empty);
             text = text.Trim();
@@ -503,7 +503,7 @@ namespace TorchDiscordSync.Plugin.Services
             if (string.IsNullOrWhiteSpace(playerName))
                 return false;
 
-            string name = playerName.Trim();
+            var name = playerName.Trim();
             return name.Length <= 64
                    && !name.Equals("Server", StringComparison.OrdinalIgnoreCase)
                    && !name.Equals("Discord", StringComparison.OrdinalIgnoreCase)
@@ -516,7 +516,7 @@ namespace TorchDiscordSync.Plugin.Services
             {
                 CleanupRecentChatEvents();
 
-                string key = BuildChatEventKey(eventType, subject);
+                var key = BuildChatEventKey(eventType, subject);
                 if (_recentChatEvents.TryGetValue(key, out var lastSeen)
                     && (DateTime.UtcNow - lastSeen).TotalSeconds < CHAT_EVENT_DEDUP_SECONDS)
                 {
@@ -542,7 +542,7 @@ namespace TorchDiscordSync.Plugin.Services
             lock (_lockObject)
             {
                 CleanupExpectedSelfEchoEvents();
-                string key = BuildChatEventKey(eventType, subject);
+                var key = BuildChatEventKey(eventType, subject);
                 if (!_expectedSelfEchoEvents.ContainsKey(key))
                     return false;
 
@@ -559,7 +559,7 @@ namespace TorchDiscordSync.Plugin.Services
             {
                 CleanupRecentChatEvents();
 
-                string key = BuildChatEventKey(eventType, subject);
+                var key = BuildChatEventKey(eventType, subject);
                 return _recentChatEvents.TryGetValue(key, out var lastSeen)
                        && (DateTime.UtcNow - lastSeen).TotalSeconds < CHAT_EVENT_DEDUP_SECONDS;
             }

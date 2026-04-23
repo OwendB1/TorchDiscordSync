@@ -65,7 +65,7 @@ namespace TorchDiscordSync.Plugin.Services
                 }
 
                 // Identify the nature of death (Suicide, PvP, First Blood, etc.)
-                DeathTypeEnum deathType = DetermineDeathType(killerName, victimName);
+                var deathType = DetermineDeathType(killerName, victimName);
 
                 // 1. Persistence: Log to Database
                 if (_db != null)
@@ -83,7 +83,7 @@ namespace TorchDiscordSync.Plugin.Services
                 }
 
                 // 2. Notification: Generate and send Discord message with location processing
-                string finalLocation = location;
+                var finalLocation = location;
                 if (character != null && _deathLocation != null && _config != null && _config.Death != null && _config.Death.EnableLocationZones)
                 {
                     try
@@ -100,7 +100,7 @@ namespace TorchDiscordSync.Plugin.Services
                     }
                 }
 
-                string discordMessage = GenerateDeathMessage(killerName, victimName, weaponType, deathType, finalLocation);
+                var discordMessage = GenerateDeathMessage(killerName, victimName, weaponType, deathType, finalLocation);
                 if (_eventLog != null)
                 {
                     await _eventLog.LogDeathAsync(discordMessage);
@@ -147,7 +147,7 @@ namespace TorchDiscordSync.Plugin.Services
             if (!HasPlayerEverKilledPlayer(victimName, killerName))
                 return DeathTypeEnum.FirstKill;
 
-            DateTime lastKillTime = GetLastKillTime(victimName, killerName);
+            var lastKillTime = GetLastKillTime(victimName, killerName);
 
             // Retaliation within 1 hour
             if (lastKillTime > DateTime.UtcNow.AddHours(-1))
@@ -171,13 +171,13 @@ namespace TorchDiscordSync.Plugin.Services
                 if (_deathMessages == null) return $"{killer} killed {victim}";
 
                 // Get random message template for this death type
-                string template = _deathMessages.GetRandomMessage(type);
+                var template = _deathMessages.GetRandomMessage(type);
 
                 if (string.IsNullOrEmpty(template))
                     return $"{killer} killed {victim} with {weapon}";
 
                 // CRITICAL FIX: Support BOTH old-style {0}/{1}/{2} AND new-style {victim}/{killer}
-                string formatted = template
+                var formatted = template
                     // Old-style numbered placeholders (for backward compatibility)
                     .Replace("{0}", killer)
                     .Replace("{1}", victim)
@@ -206,15 +206,15 @@ namespace TorchDiscordSync.Plugin.Services
         /// </summary>
         public (int Deaths, int Kills, float KDRatio) GetPlayerStats(string playerName)
         {
-            int deaths = _playerDeathHistory.TryGetValue(playerName, out var pDeaths) ? pDeaths.Count : 0;
-            int kills = 0;
+            var deaths = _playerDeathHistory.TryGetValue(playerName, out var pDeaths) ? pDeaths.Count : 0;
+            var kills = 0;
 
             foreach (var history in _playerDeathHistory.Values)
             {
                 kills += history.Count(d => IsPropertyEqual(d, "KillerName", playerName));
             }
 
-            float kd = deaths > 0 ? (float)kills / deaths : kills;
+            var kd = deaths > 0 ? (float)kills / deaths : kills;
             return (deaths, kills, kd);
         }
 
@@ -229,7 +229,7 @@ namespace TorchDiscordSync.Plugin.Services
             {
                 foreach (var death in history)
                 {
-                    string killer = GetProperty(death, "KillerName") as string;
+                    var killer = GetProperty(death, "KillerName") as string;
                     if (!string.IsNullOrEmpty(killer))
                     {
                         if (!stats.ContainsKey(killer)) stats[killer] = 0;

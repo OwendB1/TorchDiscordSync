@@ -106,6 +106,9 @@
       <HintPath>Dependencies\DedicatedServer64\VRage.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="WindowsBase" />
     <Reference Include="System.ComponentModel.Composition" />
   </ItemGroup>
 

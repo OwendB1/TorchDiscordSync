@@ -4,16 +4,19 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Timers;
+using System.Windows.Controls;
 using Sandbox.Game;
 using Torch;
 using Torch.API;
 using Torch.API.Managers;
+using Torch.API.Plugins;
 using Torch.API.Session;
 using Torch.Managers.ChatManager;
 using TorchDiscordSync.Plugin.Config;
 using TorchDiscordSync.Plugin.Core;
 using TorchDiscordSync.Plugin.Handlers;
 using TorchDiscordSync.Plugin.Services;
+using TorchDiscordSync.Plugin.UI;
 using TorchDiscordSync.Plugin.Utils;
 using TorchDiscordSync.Shared.Ipc;
 
@@ -24,7 +27,7 @@ namespace TorchDiscordSync
     /// Features: faction sync, bidirectional chat relay, death logging, server
     /// monitoring, and admin commands.
     /// </summary>
-    public class TorchDiscordSyncPlugin : TorchPluginBase
+    public class TorchDiscordSyncPlugin : TorchPluginBase, IWpfPlugin
     {
         private const string LegacyDiscordTextCommandPrefix = "!";
 
@@ -60,6 +63,7 @@ namespace TorchDiscordSync
         // ---- state flags ----
         private Timer           _syncTimer;
         private ITorchSession   _currentSession;
+        private TorchSessionState _sessionState            = TorchSessionState.Unloaded;
         private bool            _isInitialized              = false;
         private bool            _serverStartupLogged        = false;
         private bool            _playerTrackingInitialized  = false;
@@ -168,7 +172,7 @@ namespace TorchDiscordSync
                                 StringComparison.Ordinal))
                             return;
 
-                        ulong channelId = msg.ChannelId;
+                        var channelId = msg.ChannelId;
 
                         // Global Discord channel → game global chat
                         if (channelId == _config.Discord.ChatChannelId)
@@ -255,7 +259,7 @@ namespace TorchDiscordSync
                     "Player tracking will initialize when session loads");
 
                 // ---- faction sync timer ----
-                int syncInterval = _config.Discord.SyncIntervalSeconds * 1000;
+                var syncInterval = _config.Discord.SyncIntervalSeconds * 1000;
                 if (syncInterval <= 0 ||
                     (_config.Faction != null && !_config.Faction.Enabled))
                 {
@@ -350,6 +354,11 @@ namespace TorchDiscordSync
             base.Dispose();
         }
 
+        public UserControl GetControl()
+        {
+            return new TorchDiscordSyncControl(this);
+        }
+
         // ============================================================
         // PUBLIC COMMAND ENTRY POINT
         // (kept here so external callers have a stable API; delegates to
@@ -381,39 +390,224 @@ namespace TorchDiscordSync
             if (newConfig == null)
                 return false;
 
-            _config.Enabled = newConfig.Enabled;
-            _config.Debug = newConfig.Debug;
-            _config.AdminSteamIDs = newConfig.AdminSteamIDs;
-            _config.Discord = newConfig.Discord;
-            _config.Chat = newConfig.Chat;
-            _config.Death = newConfig.Death;
-            _config.Monitoring = newConfig.Monitoring;
-            _config.Faction = newConfig.Faction;
-            _config.CleanupIntervalSeconds = newConfig.CleanupIntervalSeconds;
-            _config.DamageHistoryMaxSeconds = newConfig.DamageHistoryMaxSeconds;
-            _config.DataStorage = newConfig.DataStorage;
-            LoggerUtil.SetDebugMode(_config.Debug);
+            return ApplyConfigurationInternal(
+                newConfig,
+                saveToDisk: false,
+                restartDiscordHost: true,
+                out _);
+        }
 
-            if (_config.Discord != null)
-            {
-                try
-                {
-                    _discordWrapper?.UpdateConfigurationAsync(CreateDiscordRuntimeConfig())
-                        .GetAwaiter()
-                        .GetResult();
-                }
-                catch (Exception ex)
-                {
-                    LoggerUtil.LogException("[DISCORD_IPC] Failed to push config reload.", ex);
-                }
-            }
-
-            return true;
+        public bool ApplyConfiguration(MainConfig updatedConfig, out string error)
+        {
+            return ApplyConfigurationInternal(
+                updatedConfig,
+                saveToDisk: true,
+                restartDiscordHost: true,
+                out error);
         }
 
         private void OnOnlinePlayersChanged()
         {
             _discordPresenceService?.RequestUpdate();
+        }
+
+        private bool ApplyConfigurationInternal(
+            MainConfig sourceConfig,
+            bool saveToDisk,
+            bool restartDiscordHost,
+            out string error)
+        {
+            error = null;
+
+            try
+            {
+                if (sourceConfig == null)
+                {
+                    error = "Configuration payload was null.";
+                    return false;
+                }
+
+                if (_config == null)
+                    _config = new MainConfig();
+
+                _config.ApplyFrom(sourceConfig);
+                LoggerUtil.SetDebugMode(_config.Debug);
+
+                if (saveToDisk && !_config.TrySave(out error))
+                    return false;
+
+                ReconfigureRuntime(restartDiscordHost);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogException("Failed to apply configuration.", ex);
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        private void ReconfigureRuntime(bool restartDiscordHost)
+        {
+            RebuildSyncTimer();
+            RestartDiscordRuntimeServices(restartDiscordHost);
+        }
+
+        private void RebuildSyncTimer()
+        {
+            if (_syncTimer != null)
+            {
+                _syncTimer.Stop();
+                _syncTimer.Dispose();
+                _syncTimer = null;
+            }
+
+            var syncIntervalSeconds = _config?.Discord?.SyncIntervalSeconds ?? 0;
+            if (syncIntervalSeconds <= 0 || (_config?.Faction != null && !_config.Faction.Enabled))
+            {
+                LoggerUtil.LogInfo(
+                    "Faction sync timer NOT recreated – disabled or interval is 0");
+                return;
+            }
+
+            _syncTimer = new Timer(syncIntervalSeconds * 1000);
+            _syncTimer.Elapsed += OnSyncTimerElapsed;
+            _syncTimer.AutoReset = true;
+
+            if (_sessionState == TorchSessionState.Loaded)
+                _syncTimer.Start();
+        }
+
+        private void RestartDiscordRuntimeServices(bool restartDiscordHost)
+        {
+            StopMonitoringService();
+            DisposePresenceService();
+
+            if (_discordWrapper != null)
+            {
+                if (restartDiscordHost)
+                {
+                    try
+                    {
+                        _discordWrapper.StopAsync().GetAwaiter().GetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        LoggerUtil.LogException(
+                            "[DISCORD_IPC] Failed to stop Discord host during config apply.",
+                            ex);
+                    }
+
+                    try
+                    {
+                        _discordWrapper.StartAsync().GetAwaiter().GetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        LoggerUtil.LogException(
+                            "[DISCORD_IPC] Failed to start Discord host during config apply.",
+                            ex);
+                    }
+                }
+                else
+                {
+                    try
+                    {
+                        _discordWrapper.UpdateConfigurationAsync(CreateDiscordRuntimeConfig())
+                            .GetAwaiter()
+                            .GetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        LoggerUtil.LogException(
+                            "[DISCORD_IPC] Failed to push config reload.",
+                            ex);
+                    }
+                }
+            }
+
+            EnsurePresenceService();
+            StartLiveSessionServices();
+        }
+
+        private void StopMonitoringService()
+        {
+            if (_monitoringService == null)
+                return;
+
+            try
+            {
+                _monitoringService.Stop();
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogError("[MONITORING] Failed to stop MonitoringService: " + ex.Message);
+            }
+
+            try
+            {
+                _monitoringService.Dispose();
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogError("[MONITORING] Failed to dispose MonitoringService: " + ex.Message);
+            }
+
+            _monitoringService = null;
+        }
+
+        private void DisposePresenceService()
+        {
+            if (_discordPresenceService == null)
+                return;
+
+            try
+            {
+                _discordPresenceService.Dispose();
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogError(
+                    "[PRESENCE] Failed to dispose DiscordPresenceService: " + ex.Message);
+            }
+
+            _discordPresenceService = null;
+        }
+
+        private void EnsurePresenceService()
+        {
+            if (_discordPresenceService == null && _discordWrapper != null)
+                _discordPresenceService = new DiscordPresenceService(_config, _discordWrapper);
+        }
+
+        private void StartLiveSessionServices()
+        {
+            if (_sessionState != TorchSessionState.Loaded)
+                return;
+
+            try
+            {
+                if (_monitoringService == null && _discordBot != null)
+                {
+                    _monitoringService = new MonitoringService(_config, _discordWrapper);
+                    _monitoringService.Initialize();
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogError(
+                    "[MONITORING] Failed to restart MonitoringService: " + ex.Message);
+            }
+
+            try
+            {
+                _discordPresenceService?.Start();
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogError(
+                    "[PRESENCE] Failed to restart DiscordPresenceService: " + ex.Message);
+            }
         }
 
         // ============================================================
@@ -428,6 +622,7 @@ namespace TorchDiscordSync
             ITorchSession session, TorchSessionState state)
         {
             _currentSession = session;
+            _sessionState = state;
 
             switch (state)
             {
@@ -564,7 +759,7 @@ namespace TorchDiscordSync
                         Task.Run(async () =>
                         {
                             await Task.Delay(3000).ConfigureAwait(false);
-                            float stableSimSpeed = PluginUtils.GetCurrentSimSpeed();
+                            var stableSimSpeed = PluginUtils.GetCurrentSimSpeed();
                             await _eventLog.LogServerStatusAsync("STARTED", stableSimSpeed).ConfigureAwait(false);
                         });
                     }
@@ -624,7 +819,7 @@ namespace TorchDiscordSync
                     try
                     {
                         await Task.Delay(5000).ConfigureAwait(false);
-                        float stableSimSpeed = PluginUtils.GetCurrentSimSpeed();
+                        var stableSimSpeed = PluginUtils.GetCurrentSimSpeed();
 
                         if (_orchestrator != null)
                         {

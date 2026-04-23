@@ -250,7 +250,7 @@ namespace TorchDiscordSync.Plugin.Services
                 // ================================================================
                 // STEP 3: CHECK REFLECTION
                 // ================================================================
-                long lastDamageDealerId = GetLastDamageDealerId(myCharacter);
+                var lastDamageDealerId = GetLastDamageDealerId(myCharacter);
                 if (lastDamageDealerId != 0 && TryAnalyzeAttacker(lastDamageDealerId, info))
                 {
                     LoggerUtil.LogSuccess("[KILLER] Detected via reflection");
@@ -550,7 +550,7 @@ namespace TorchDiscordSync.Plugin.Services
             try
             {
                 var characterType = character.GetType();
-                string[] possibleFieldNames = new string[]
+                var possibleFieldNames = new string[]
                 {
                     "m_lastDamageDealer",
                     "m_lastAttacker",
@@ -663,7 +663,7 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                string subtypeName = turret.BlockDefinition.SubtypeName;
+                var subtypeName = turret.BlockDefinition.SubtypeName;
                 if (subtypeName.Contains("Gatling"))
                     return "Gatling Turret";
                 if (subtypeName.Contains("Missile"))
@@ -695,7 +695,7 @@ namespace TorchDiscordSync.Plugin.Services
                     return;
                 }
 
-                long ownerId = turretBlock.OwnerId;
+                var ownerId = turretBlock.OwnerId;
                 var playerIdentity = MySession.Static?.Players?.TryGetIdentity(ownerId);
                 if (playerIdentity != null)
                 {

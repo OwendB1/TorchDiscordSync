@@ -46,7 +46,7 @@ namespace TorchDiscordSync.Plugin.Handlers
                 if (string.IsNullOrWhiteSpace(msg.Message))
                     return;
 
-                string channelName = msg.Channel.ToString() ?? "Unknown";
+                var channelName = msg.Channel.ToString() ?? "Unknown";
                 LoggerUtil.LogDebug(
                     $"[CHAT] Channel=\"{channelName}\" Author=\"{msg.Author}\" SteamId={msg.AuthorSteamId} Message=\"{msg.Message}\"");
 
@@ -115,7 +115,7 @@ namespace TorchDiscordSync.Plugin.Handlers
 
             if (ShouldTriggerFactionSyncFromChat(msg.Message))
             {
-                string reason = "system chat: " + TruncateForLog(msg.Message, 120);
+                var reason = "system chat: " + TruncateForLog(msg.Message, 120);
                 LoggerUtil.LogInfo("[SYNC] Immediate faction sync requested from chat event");
                 _ = _orchestrator.RequestFactionSyncFromChatAsync(reason);
             }
@@ -189,7 +189,7 @@ namespace TorchDiscordSync.Plugin.Handlers
             if (_config?.AdminSteamIDs == null || _config.AdminSteamIDs.Length == 0)
                 return false;
 
-            for (int i = 0; i < _config.AdminSteamIDs.Length; i++)
+            for (var i = 0; i < _config.AdminSteamIDs.Length; i++)
             {
                 if (_config.AdminSteamIDs[i] == steamId)
                     return true;
@@ -264,14 +264,14 @@ namespace TorchDiscordSync.Plugin.Handlers
                 return;
 
             long gameChatId = 0;
-            int colonIndex = channelName.IndexOf(':');
+            var colonIndex = channelName.IndexOf(':');
             if (colonIndex >= 0 && colonIndex < channelName.Length - 1)
                 long.TryParse(channelName.Substring(colonIndex + 1), out gameChatId);
 
-            FactionModel faction = gameChatId != 0 ? _db.GetFactionByGameChatId(gameChatId) : null;
+            var faction = gameChatId != 0 ? _db.GetFactionByGameChatId(gameChatId) : null;
             if (faction == null && msg.AuthorSteamId.HasValue)
             {
-                long authorSteamId = (long)msg.AuthorSteamId.Value;
+                var authorSteamId = (long)msg.AuthorSteamId.Value;
                 var player = _db.GetPlayerBySteamID(authorSteamId);
                 if (player != null)
                     faction = _db.GetFaction(player.FactionID);
@@ -351,7 +351,7 @@ namespace TorchDiscordSync.Plugin.Handlers
 
         private static List<string> NormalizeLegacyTokens(string command)
         {
-            string raw = command.StartsWith("/tds", StringComparison.OrdinalIgnoreCase)
+            var raw = command.StartsWith("/tds", StringComparison.OrdinalIgnoreCase)
                 ? command.Substring(4).Trim()
                 : command.Trim();
 
@@ -359,12 +359,12 @@ namespace TorchDiscordSync.Plugin.Handlers
                 return new List<string>();
 
             var tokens = new List<string>();
-            foreach (string part in raw.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+            foreach (var part in raw.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 var split = part.Split(new[] { ':' }, StringSplitOptions.RemoveEmptyEntries);
-                foreach (string item in split)
+                foreach (var item in split)
                 {
-                    string normalized = item.Trim().ToLowerInvariant();
+                    var normalized = item.Trim().ToLowerInvariant();
                     if (normalized == "undo_all")
                         normalized = "undoall";
 

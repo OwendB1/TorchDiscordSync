@@ -41,18 +41,18 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                ulong adminChannelId = _config?.Discord?.AdminBotChannelId ?? 0;
+                var adminChannelId = _config?.Discord?.AdminBotChannelId ?? 0;
                 if (adminChannelId == 0 || msg == null || msg.ChannelId != adminChannelId)
                     return;
 
                 if (msg.AuthorIsBot)
                     return;
 
-                string content = msg.Content != null ? msg.Content.Trim() : string.Empty;
+                var content = msg.Content != null ? msg.Content.Trim() : string.Empty;
                 if (!content.StartsWith("!tds", StringComparison.OrdinalIgnoreCase))
                     return;
 
-                string authorTag = msg.AuthorUsername;
+                var authorTag = msg.AuthorUsername;
                 if (!string.IsNullOrWhiteSpace(msg.AuthorDiscriminator)
                     && msg.AuthorDiscriminator != "0")
                 {
@@ -61,8 +61,8 @@ namespace TorchDiscordSync.Plugin.Services
 
                 LoggerUtil.LogInfo($"[ADMIN_BOT] Command from {authorTag}: {content}");
 
-                string subRaw = content.Length > 4 ? content.Substring(4).Trim() : string.Empty;
-                string normalizedSubRaw = NormalizeDiscordAdminCommand(subRaw);
+                var subRaw = content.Length > 4 ? content.Substring(4).Trim() : string.Empty;
+                var normalizedSubRaw = NormalizeDiscordAdminCommand(subRaw);
 
                 await ExecuteAsync(msg, normalizedSubRaw, authorTag).ConfigureAwait(false);
             }
@@ -89,7 +89,7 @@ namespace TorchDiscordSync.Plugin.Services
             string authorTag)
         {
             var parts = subRaw.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            string sub = parts.Length > 0 ? parts[0].ToLower() : "help";
+            var sub = parts.Length > 0 ? parts[0].ToLower() : "help";
 
             try
             {
@@ -102,7 +102,7 @@ namespace TorchDiscordSync.Plugin.Services
 
                     case "sync:check":
                         {
-                            string result = _factionSync.AdminSyncCheck();
+                            var result = _factionSync.AdminSyncCheck();
                             await ReplySuccessAsync(msg, "sync:check", result).ConfigureAwait(false);
                             LoggerUtil.LogInfo($"[ADMIN_BOT] {authorTag} ran sync:check");
                             break;
@@ -110,7 +110,7 @@ namespace TorchDiscordSync.Plugin.Services
 
                     case "sync:status":
                         {
-                            string result = _factionSync.AdminSyncStatus();
+                            var result = _factionSync.AdminSyncStatus();
                             await ReplyInfoAsync(msg, "sync:status", result).ConfigureAwait(false);
                             LoggerUtil.LogInfo($"[ADMIN_BOT] {authorTag} ran sync:status");
                             break;
@@ -127,10 +127,10 @@ namespace TorchDiscordSync.Plugin.Services
                                 return;
                             }
 
-                            string tag = parts[1].ToUpper();
+                            var tag = parts[1].ToUpper();
                             LoggerUtil.LogWarning(
                                 $"[ADMIN_BOT] {authorTag} running sync:undo for {tag}");
-                            string result = await _factionSync.AdminSyncUndo(tag).ConfigureAwait(false);
+                            var result = await _factionSync.AdminSyncUndo(tag).ConfigureAwait(false);
                             await ReplySuccessAsync(msg, "sync:undo " + tag, result).ConfigureAwait(false);
                             break;
                         }
@@ -139,7 +139,7 @@ namespace TorchDiscordSync.Plugin.Services
                         {
                             LoggerUtil.LogWarning(
                                 $"[ADMIN_BOT] {authorTag} running sync:undo_all");
-                            string result = await _factionSync.AdminSyncUndoAll().ConfigureAwait(false);
+                            var result = await _factionSync.AdminSyncUndoAll().ConfigureAwait(false);
                             await ReplySuccessAsync(msg, "sync:undo_all", result).ConfigureAwait(false);
                             break;
                         }
@@ -148,7 +148,7 @@ namespace TorchDiscordSync.Plugin.Services
                         {
                             LoggerUtil.LogInfo(
                                 $"[ADMIN_BOT] {authorTag} running sync:cleanup");
-                            string result = await _factionSync.AdminSyncCleanup().ConfigureAwait(false);
+                            var result = await _factionSync.AdminSyncCleanup().ConfigureAwait(false);
                             await ReplySuccessAsync(msg, "sync:cleanup", result).ConfigureAwait(false);
                             break;
                         }
@@ -203,9 +203,9 @@ namespace TorchDiscordSync.Plugin.Services
                     case "status":
                         {
                             var factions = _db?.GetAllFactions();
-                            int totalFactions = factions?.Count ?? 0;
-                            int totalPlayers = factions?.Sum(f => f.Players?.Count ?? 0) ?? 0;
-                            int synced = factions?.Count(f => f.SyncStatus == "Synced") ?? 0;
+                            var totalFactions = factions?.Count ?? 0;
+                            var totalPlayers = factions?.Sum(f => f.Players?.Count ?? 0) ?? 0;
+                            var synced = factions?.Count(f => f.SyncStatus == "Synced") ?? 0;
 
                             var sb = new StringBuilder();
                             sb.AppendLine($"**Factions:** {totalFactions} ({synced} synced)");
@@ -321,7 +321,7 @@ namespace TorchDiscordSync.Plugin.Services
 
         private async Task SendEmbedAsync(ulong channelId, DiscordEmbedModel embed)
         {
-            bool sent = await _discord.SendEmbedAsync(channelId, embed).ConfigureAwait(false);
+            var sent = await _discord.SendEmbedAsync(channelId, embed).ConfigureAwait(false);
             if (!sent)
                 LoggerUtil.LogWarning("[ADMIN_BOT] Failed to send embed reply to Discord");
         }

@@ -21,7 +21,7 @@ namespace TorchDiscordSync.Plugin.Utils
         {
             try
             {
-                string configPath = Path.Combine(
+                var configPath = Path.Combine(
                     MainConfig.GetInstancePath(),
                     MainConfig.PLUGIN_DIR_NAME,
                     "configs",
@@ -29,7 +29,7 @@ namespace TorchDiscordSync.Plugin.Utils
 
                 if (File.Exists(configPath))
                 {
-                    string configContent = File.ReadAllText(configPath);
+                    var configContent = File.ReadAllText(configPath);
                     _debugMode = configContent.Contains("<Debug>true</Debug>");
                 }
             }
@@ -51,7 +51,7 @@ namespace TorchDiscordSync.Plugin.Utils
         {
             try
             {
-                string logDir = Path.Combine(
+                var logDir = Path.Combine(
                     MainConfig.GetInstancePath(),
                     MainConfig.PLUGIN_DIR_NAME,
                     "Logging");
@@ -59,7 +59,7 @@ namespace TorchDiscordSync.Plugin.Utils
 
                 if (string.IsNullOrEmpty(_currentLogFile))
                 {
-                    string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
+                    var timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
                     _currentLogFile = Path.Combine(logDir, $"{timestamp}_TDS_plugin.log");
                 }
                 return _currentLogFile;
@@ -67,12 +67,12 @@ namespace TorchDiscordSync.Plugin.Utils
             catch
             {
                 // Fallback to temp directory
-                string tempLogDir = Path.Combine(Path.GetTempPath(), "TDSSaveData", "Logging");
+                var tempLogDir = Path.Combine(Path.GetTempPath(), "TDSSaveData", "Logging");
                 if (!Directory.Exists(tempLogDir))
                 {
                     Directory.CreateDirectory(tempLogDir);
                 }
-                string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
+                var timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
                 return Path.Combine(tempLogDir, $"{timestamp}_TDS_plugin.log");
             }
         }
@@ -84,7 +84,7 @@ namespace TorchDiscordSync.Plugin.Utils
         {
             var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             var safeMessage = message ?? string.Empty;
-            string consoleMessage = $"{PREFIX} [{timestamp}] [{category}] {safeMessage}";
+            var consoleMessage = $"{PREFIX} [{timestamp}] [{category}] {safeMessage}";
 
             try
             {
@@ -97,10 +97,10 @@ namespace TorchDiscordSync.Plugin.Utils
 
             try
             {
-                string fileMessage = $"[{timestamp}] [{category}] {safeMessage}";
+                var fileMessage = $"[{timestamp}] [{category}] {safeMessage}";
                 lock (_lock)
                 {
-                    string logFilePath = GetLogFilePath();
+                    var logFilePath = GetLogFilePath();
                     File.AppendAllText(logFilePath, fileMessage + Environment.NewLine);
                 }
             }
@@ -174,7 +174,7 @@ namespace TorchDiscordSync.Plugin.Utils
                 builder.Append(" | ");
             }
 
-            int depth = 0;
+            var depth = 0;
             var current = ex;
             while (current != null)
             {

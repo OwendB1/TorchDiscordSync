@@ -78,8 +78,8 @@ namespace TorchDiscordSync.Plugin.Services
             try
             {
                 var factions = _db?.GetAllFactions();
-                int totalFactions = factions?.Count ?? 0;
-                int totalPlayers = 0;
+                var totalFactions = factions?.Count ?? 0;
+                var totalPlayers = 0;
 
                 if (factions != null)
                 {
@@ -177,7 +177,7 @@ namespace TorchDiscordSync.Plugin.Services
             {
                 try
                 {
-                    string result = await _factionSync.AdminSyncUndo(factionTag.ToUpperInvariant());
+                    var result = await _factionSync.AdminSyncUndo(factionTag.ToUpperInvariant());
                     Respond(request, result);
                 }
                 catch (Exception ex)
@@ -198,7 +198,7 @@ namespace TorchDiscordSync.Plugin.Services
             {
                 try
                 {
-                    string result = await _factionSync.AdminSyncUndoAll();
+                    var result = await _factionSync.AdminSyncUndoAll();
                     Respond(request, result);
                 }
                 catch (Exception ex)
@@ -219,7 +219,7 @@ namespace TorchDiscordSync.Plugin.Services
             {
                 try
                 {
-                    string result = await _factionSync.AdminSyncCleanup();
+                    var result = await _factionSync.AdminSyncCleanup();
                     Respond(request, result);
                 }
                 catch (Exception ex)

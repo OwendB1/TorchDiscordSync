@@ -32,7 +32,7 @@ namespace TorchDiscordSync.Plugin.Services
             _config = config;
             _discord = discord;
 
-            int intervalSeconds = GetIntervalSeconds();
+            var intervalSeconds = GetIntervalSeconds();
             _presenceTimer = new System.Timers.Timer(intervalSeconds * 1000.0);
             _presenceTimer.AutoReset = true;
             _presenceTimer.Elapsed += OnPresenceTimerElapsed;
@@ -134,14 +134,14 @@ namespace TorchDiscordSync.Plugin.Services
 
         private async Task UpdatePresenceAsync(string presenceText, bool forceUpdate)
         {
-            bool isReady = _discord != null && _discord.IsReady;
+            var isReady = _discord != null && _discord.IsReady;
             if (!isReady)
             {
                 _lastReadyState = false;
                 return;
             }
 
-            bool shouldForceUpdate = forceUpdate || !_lastReadyState;
+            var shouldForceUpdate = forceUpdate || !_lastReadyState;
             _lastReadyState = true;
 
             if (
@@ -152,7 +152,7 @@ namespace TorchDiscordSync.Plugin.Services
                 return;
             }
 
-            bool updated = await _discord.UpdatePresenceAsync(presenceText).ConfigureAwait(false);
+            var updated = await _discord.UpdatePresenceAsync(presenceText).ConfigureAwait(false);
             if (updated)
             {
                 _lastPresenceText = presenceText;
@@ -169,9 +169,9 @@ namespace TorchDiscordSync.Plugin.Services
 
         private string BuildPresenceText()
         {
-            float simSpeed = PluginUtils.GetCurrentSimSpeed();
-            int playerCount = GetOnlinePlayerCount();
-            int maxPlayers = GetMaxPlayerCount();
+            var simSpeed = PluginUtils.GetCurrentSimSpeed();
+            var playerCount = GetOnlinePlayerCount();
+            var maxPlayers = GetMaxPlayerCount();
 
             return string.Format(
                 CultureInfo.InvariantCulture,
@@ -184,7 +184,7 @@ namespace TorchDiscordSync.Plugin.Services
 
         private int GetIntervalSeconds()
         {
-            int intervalSeconds = _config?.Discord?.PresenceUpdateIntervalSeconds ?? DefaultIntervalSeconds;
+            var intervalSeconds = _config?.Discord?.PresenceUpdateIntervalSeconds ?? DefaultIntervalSeconds;
             return intervalSeconds > 0 ? intervalSeconds : DefaultIntervalSeconds;
         }
 

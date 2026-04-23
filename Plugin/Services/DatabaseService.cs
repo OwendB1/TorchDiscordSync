@@ -45,7 +45,7 @@ namespace TorchDiscordSync.Plugin.Services
         /// </summary>
         public DatabaseService(string configPath = null)
         {
-            string dataDir = MainConfig.GetDataDirectory();
+            var dataDir = MainConfig.GetDataDirectory();
 
             _verificationDataPath = Path.Combine(dataDir, "VerificationData.xml");
             _factionDataPath = Path.Combine(dataDir, "FactionData.xml");
@@ -73,7 +73,7 @@ namespace TorchDiscordSync.Plugin.Services
             // SQLITE INITIALIZATION
             // ============================================================
             var cfg = MainConfig.Load();
-            bool sqliteEnabled = cfg?.DataStorage?.UseSQLite ?? true;
+            var sqliteEnabled = cfg?.DataStorage?.UseSQLite ?? true;
 
             if (sqliteEnabled)
             {
@@ -186,7 +186,7 @@ namespace TorchDiscordSync.Plugin.Services
         /// </summary>
         private void LoadVerificationDataFromXml()
         {
-            string legacyPath = Path.Combine(Path.GetDirectoryName(_verificationDataPath), "MambaTorchDiscordSyncData.xml");
+            var legacyPath = Path.Combine(Path.GetDirectoryName(_verificationDataPath), "MambaTorchDiscordSyncData.xml");
             if (File.Exists(legacyPath))
             {
                 try
@@ -197,7 +197,7 @@ namespace TorchDiscordSync.Plugin.Services
                         var legacy = (LegacyRootDataModel)legacySerializer.Deserialize(fs);
                         if (legacy != null)
                         {
-                            bool hadLegacyData = (legacy.Factions?.Count ?? 0) > 0 || (legacy.Players?.Count ?? 0) > 0
+                            var hadLegacyData = (legacy.Factions?.Count ?? 0) > 0 || (legacy.Players?.Count ?? 0) > 0
                                 || (legacy.EventLogs?.Count ?? 0) > 0 || (legacy.DeathHistory?.Count ?? 0) > 0;
                             if (hadLegacyData)
                             {
@@ -616,7 +616,7 @@ namespace TorchDiscordSync.Plugin.Services
             {
                 if (entry == null) return;
                 var cutoff = entry.VerifiedAt.AddSeconds(-1);
-                bool duplicate = _verificationData.VerificationHistory.Any(v =>
+                var duplicate = _verificationData.VerificationHistory.Any(v =>
                     v.SteamID == entry.SteamID && v.VerifiedAt >= cutoff && v.VerifiedAt <= entry.VerifiedAt.AddSeconds(1));
                 if (!duplicate)
                 {
@@ -756,7 +756,7 @@ namespace TorchDiscordSync.Plugin.Services
             lock (_lock)
             {
                 // Get player name from pending verification if not provided
-                string playerNameToSave = gamePlayerName;
+                var playerNameToSave = gamePlayerName;
                 if (string.IsNullOrEmpty(playerNameToSave))
                 {
                     var pending = _verificationPlayersData.PendingVerifications.Find(p =>

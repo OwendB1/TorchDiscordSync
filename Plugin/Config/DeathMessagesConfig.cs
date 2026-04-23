@@ -231,12 +231,12 @@ namespace TorchDiscordSync.Plugin.Config
 
         public string GetRandomMessage(DeathTypeEnum deathType)
         {
-            List<string> messages = GetMessagesForType(deathType);
+            var messages = GetMessagesForType(deathType);
 
             if (messages == null || messages.Count == 0)
                 return "{victim} died"; // Fallback
 
-            int index = _random.Next(messages.Count);
+            var index = _random.Next(messages.Count);
             return messages[index];
         }
 
@@ -267,13 +267,13 @@ namespace TorchDiscordSync.Plugin.Config
 
         public static DeathMessagesConfig Load()
         {
-            string path = Path.Combine(MainConfig.GetConfigDirectory(), "DeathMessages.xml");
+            var path = Path.Combine(MainConfig.GetConfigDirectory(), "DeathMessages.xml");
             try
             {
                 if (File.Exists(path))
                 {
-                    XmlSerializer serializer = new XmlSerializer(typeof(DeathMessagesConfig));
-                    using (FileStream fs = new FileStream(path, FileMode.Open))
+                    var serializer = new XmlSerializer(typeof(DeathMessagesConfig));
+                    using (var fs = new FileStream(path, FileMode.Open))
                     {
                         return (DeathMessagesConfig)serializer.Deserialize(fs);
                     }
@@ -294,12 +294,12 @@ namespace TorchDiscordSync.Plugin.Config
 
         public void Save()
         {
-            string path = Path.Combine(MainConfig.GetConfigDirectory(), "DeathMessages.xml");
+            var path = Path.Combine(MainConfig.GetConfigDirectory(), "DeathMessages.xml");
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
-                XmlSerializer serializer = new XmlSerializer(typeof(DeathMessagesConfig));
-                using (FileStream fs = new FileStream(path, FileMode.Create))
+                var serializer = new XmlSerializer(typeof(DeathMessagesConfig));
+                using (var fs = new FileStream(path, FileMode.Create))
                 {
                     serializer.Serialize(fs, this);
                 }
