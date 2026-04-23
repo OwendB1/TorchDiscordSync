@@ -1,11 +1,11 @@
 // Plugin/Handlers/EventManager.cs
 using System;
 using System.Threading.Tasks;
+using Sandbox.Game.Entities.Character.Components; // MyDamageInformation
+using Sandbox.ModAPI; // MyAPIGateway
 using TorchDiscordSync.Plugin.Config;
 using TorchDiscordSync.Plugin.Services;
 using TorchDiscordSync.Plugin.Utils;
-using Sandbox.Game.Entities.Character.Components; // MyDamageInformation
-using Sandbox.ModAPI; // MyAPIGateway
 using VRage.Game.ModAPI; // Za dodatne API pozive
 
 namespace TorchDiscordSync.Plugin.Handlers

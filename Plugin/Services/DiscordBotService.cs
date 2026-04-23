@@ -23,8 +23,12 @@ namespace TorchDiscordSync.Plugin.Services
         private const string HostExecutableFileName = "TorchDiscordSync.DiscordHost.exe";
         private const string HostManagedDllFileName = "TorchDiscordSync.DiscordHost.dll";
         private const string HostAppHostFileName = "TorchDiscordSync.DiscordHost";
-        private const string PluginArchiveFileName = "TorchDiscordSync (linux compatible).zip";
         private const string PluginManifestGuid = "07ce2bbd-f606-418d-aff1-ea95bfc5795d";
+        private static readonly string[] PluginArchiveFileNames =
+        {
+            "plugin.zip",
+            "TorchDiscordSync (linux compatible).zip",
+        };
 
         private readonly SemaphoreSlim _lifecycleLock = new SemaphoreSlim(1, 1);
         private readonly SemaphoreSlim _writeLock = new SemaphoreSlim(1, 1);
@@ -88,6 +92,9 @@ namespace TorchDiscordSync.Plugin.Services
                     return false;
                 }
 
+                LoggerUtil.LogInfo(
+                    "[DISCORD_IPC] Launching Discord host using " + startInfo.FileName);
+
                 _hostProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
                 _hostProcess.Exited += OnHostProcessExited;
 
@@ -128,7 +135,7 @@ namespace TorchDiscordSync.Plugin.Services
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogError("[DISCORD_IPC] StartAsync failed: " + ex.Message);
+                LoggerUtil.LogException("[DISCORD_IPC] StartAsync failed.", ex);
                 await StopInternalAsync(false).ConfigureAwait(false);
                 return false;
             }
@@ -553,6 +560,9 @@ namespace TorchDiscordSync.Plugin.Services
             catch (Exception ex)
             {
                 _pendingRequests.TryRemove(requestId, out _);
+                LoggerUtil.LogException(
+                    "[DISCORD_IPC] Request " + operation + " failed.",
+                    ex);
                 return CreateLocalFailure(operation, ex.Message);
             }
         }
@@ -593,7 +603,7 @@ namespace TorchDiscordSync.Plugin.Services
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogError("[DISCORD_IPC] Pipe read loop failed: " + ex.Message);
+                LoggerUtil.LogException("[DISCORD_IPC] Pipe read loop failed.", ex);
             }
             finally
             {
@@ -649,7 +659,7 @@ namespace TorchDiscordSync.Plugin.Services
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogError("[DISCORD_IPC] Event dispatch failed: " + ex.Message);
+                LoggerUtil.LogException("[DISCORD_IPC] Event dispatch failed.", ex);
             }
         }
 
@@ -671,7 +681,7 @@ namespace TorchDiscordSync.Plugin.Services
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogWarning("[DISCORD_IPC] Graceful host shutdown failed: " + ex.Message);
+                LoggerUtil.LogException("[DISCORD_IPC] Graceful host shutdown failed.", ex);
             }
 
             try
@@ -682,25 +692,13 @@ namespace TorchDiscordSync.Plugin.Services
                     _pipeCancellation.Dispose();
                     _pipeCancellation = null;
                 }
-            }
-            catch
-            {
-            }
-
-            try
-            {
+                
                 if (_pipeStream != null)
                 {
                     _pipeStream.Dispose();
                     _pipeStream = null;
                 }
-            }
-            catch
-            {
-            }
-
-            try
-            {
+                
                 if (_readerTask != null)
                 {
                     await _readerTask.ConfigureAwait(false);
@@ -709,25 +707,23 @@ namespace TorchDiscordSync.Plugin.Services
             }
             catch
             {
+                // ignored
             }
-
+            
             try
             {
-                if (_hostProcess != null)
+                if (_hostProcess is { HasExited: false })
                 {
-                    if (!_hostProcess.HasExited)
+                    if (!_hostProcess.WaitForExit(5000))
                     {
-                        if (!_hostProcess.WaitForExit(5000))
-                        {
-                            _hostProcess.Kill();
-                            _hostProcess.WaitForExit(5000);
-                        }
+                        _hostProcess.Kill();
+                        _hostProcess.WaitForExit(5000);
                     }
                 }
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogWarning("[DISCORD_IPC] Host process termination warning: " + ex.Message);
+                LoggerUtil.LogException("[DISCORD_IPC] Host process termination warning.", ex);
             }
             finally
             {
@@ -741,18 +737,30 @@ namespace TorchDiscordSync.Plugin.Services
 
         private void OnHostProcessExited(object sender, EventArgs e)
         {
-            LoggerUtil.LogWarning("[DISCORD_IPC] Discord host process exited.");
+            string exitDetails = string.Empty;
+
+            try
+            {
+                if (_hostProcess != null)
+                    exitDetails = " ExitCode=" + _hostProcess.ExitCode;
+            }
+            catch
+            {
+                // ignored
+            }
+
+            LoggerUtil.LogWarning("[DISCORD_IPC] Discord host process exited." + exitDetails);
             CompletePendingRequests("Discord host process exited.");
             ApplyConnectionState(new DiscordConnectionState());
         }
 
-        private void OnHostOutputDataReceived(object sender, DataReceivedEventArgs e)
+        private static void OnHostOutputDataReceived(object sender, DataReceivedEventArgs e)
         {
             if (!string.IsNullOrWhiteSpace(e.Data))
                 LoggerUtil.LogInfo("[DISCORD_HOST] " + e.Data);
         }
 
-        private void OnHostErrorDataReceived(object sender, DataReceivedEventArgs e)
+        private static void OnHostErrorDataReceived(object sender, DataReceivedEventArgs e)
         {
             if (!string.IsNullOrWhiteSpace(e.Data))
                 LoggerUtil.LogError("[DISCORD_HOST] " + e.Data);
@@ -769,7 +777,7 @@ namespace TorchDiscordSync.Plugin.Services
                 "--pipe " + Quote(_pipeName)
                 + " --parent-pid " + Process.GetCurrentProcess().Id
                 + " --plugin-dir " + Quote(
-                    TorchDiscordSync.Plugin.Config.MainConfig.GetPluginDirectory());
+                    Config.MainConfig.GetPluginDirectory());
 
             if (!string.IsNullOrWhiteSpace(executablePath))
             {
@@ -783,25 +791,26 @@ namespace TorchDiscordSync.Plugin.Services
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                 };
+
+                LoggerUtil.LogInfo(
+                    "[DISCORD_IPC] Using native Discord host executable at " + executablePath);
                 return true;
             }
 
-            if (!string.IsNullOrWhiteSpace(dllPath))
+            if (string.IsNullOrWhiteSpace(dllPath)) return false;
+            startInfo = new ProcessStartInfo
             {
-                startInfo = new ProcessStartInfo
-                {
-                    FileName = "dotnet",
-                    Arguments = Quote(dllPath) + " " + commonArguments,
-                    WorkingDirectory = workingDirectory,
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                };
-                return true;
-            }
-
-            return false;
+                FileName = "dotnet",
+                Arguments = Quote(dllPath) + " " + commonArguments,
+                WorkingDirectory = workingDirectory,
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            LoggerUtil.LogInfo(
+                "[DISCORD_IPC] Using managed Discord host entrypoint via dotnet at " + dllPath);
+            return true;
         }
 
         private static bool TryResolveHostArtifacts(
@@ -815,6 +824,17 @@ namespace TorchDiscordSync.Plugin.Services
 
             string assemblyDirectory;
             TryGetAssemblyDirectory(out assemblyDirectory);
+
+            if (string.IsNullOrWhiteSpace(assemblyDirectory))
+            {
+                LoggerUtil.LogInfo(
+                    "[DISCORD_IPC] Plugin assembly location is unavailable. Torch likely loaded this plugin from a zip archive.");
+            }
+            else
+            {
+                LoggerUtil.LogDebug(
+                    "[DISCORD_IPC] Plugin assembly directory: " + assemblyDirectory);
+            }
 
             var hostBaseDirectories = new List<string>();
             if (!string.IsNullOrWhiteSpace(assemblyDirectory))
@@ -837,14 +857,18 @@ namespace TorchDiscordSync.Plugin.Services
                             out executablePath,
                             out dllPath))
                     {
+                        LoggerUtil.LogInfo(
+                            "[DISCORD_IPC] Staged Discord host artifacts from directory "
+                            + hostBaseDirectory);
                         return true;
                     }
                 }
                 catch (Exception ex)
                 {
-                    LoggerUtil.LogWarning(
+                    LoggerUtil.LogException(
                         "[DISCORD_IPC] Failed to stage Discord host artifacts from "
-                        + hostBaseDirectory + ": " + ex.Message);
+                        + hostBaseDirectory + ".",
+                        ex);
                 }
             }
 
@@ -858,24 +882,34 @@ namespace TorchDiscordSync.Plugin.Services
                             out executablePath,
                             out dllPath))
                     {
+                        LoggerUtil.LogInfo(
+                            "[DISCORD_IPC] Staged Discord host artifacts from archive "
+                            + archivePath);
                         return true;
                     }
                 }
                 catch (Exception ex)
                 {
-                    LoggerUtil.LogWarning(
+                    LoggerUtil.LogException(
                         "[DISCORD_IPC] Failed to extract Discord host from archive "
-                        + archivePath + ": " + ex.Message);
+                        + archivePath + ".",
+                        ex);
                 }
             }
 
             if (string.IsNullOrWhiteSpace(assemblyDirectory))
+            {
+                LoggerUtil.LogError(
+                    "[DISCORD_IPC] Unable to resolve Discord host artifacts from plugin archives.");
                 return false;
+            }
 
             var candidateDirectories = new[]
             {
                 Path.Combine(assemblyDirectory, "..", "..", "DiscordHost", "bin", "Debug", "net8.0"),
+                Path.Combine(assemblyDirectory, "..", "..", "DiscordHost", "bin", "Debug", "net8.0", "win-x64", "publish"),
                 Path.Combine(assemblyDirectory, "..", "..", "DiscordHost", "bin", "Release", "net8.0"),
+                Path.Combine(assemblyDirectory, "..", "..", "DiscordHost", "bin", "Release", "net8.0", "win-x64", "publish"),
             };
 
             foreach (var candidate in candidateDirectories)
@@ -888,17 +922,27 @@ namespace TorchDiscordSync.Plugin.Services
                             out workingDirectory,
                             out executablePath,
                             out dllPath))
+                    {
+                        LoggerUtil.LogInfo(
+                            "[DISCORD_IPC] Resolved Discord host artifacts from development output "
+                            + fullCandidate);
                         return true;
+                    }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    LoggerUtil.LogDebug(
+                        "[DISCORD_IPC] Failed to inspect development Discord host directory "
+                        + candidate + ": " + ex.Message);
                 }
             }
 
+            LoggerUtil.LogError(
+                "[DISCORD_IPC] Unable to resolve Discord host artifacts from directories or archives.");
             return false;
         }
 
-        private static bool TryGetAssemblyDirectory(out string assemblyDirectory)
+        private static void TryGetAssemblyDirectory(out string assemblyDirectory)
         {
             assemblyDirectory = null;
 
@@ -908,15 +952,12 @@ namespace TorchDiscordSync.Plugin.Services
                 if (!string.IsNullOrWhiteSpace(location))
                 {
                     assemblyDirectory = Path.GetDirectoryName(location);
-                    if (!string.IsNullOrWhiteSpace(assemblyDirectory))
-                        return true;
                 }
             }
             catch
             {
+                // ignored
             }
-
-            return false;
         }
 
         private static string TryFindInstalledPluginDirectory()
@@ -939,6 +980,7 @@ namespace TorchDiscordSync.Plugin.Services
             }
             catch
             {
+                // ignored
             }
 
             return null;
@@ -952,24 +994,13 @@ namespace TorchDiscordSync.Plugin.Services
             if (DirectoryContainsHostEntrypoint(pluginDirectory))
                 return true;
 
+            if (TryGetPluginArchivePath(pluginDirectory, out var archivePath))
+            {
+                return true;
+            }
+
             var manifestPath = Path.Combine(pluginDirectory, "manifest.xml");
-            if (!File.Exists(manifestPath))
-                return false;
-
-            try
-            {
-                var document = new XmlDocument();
-                document.Load(manifestPath);
-
-                var guidNode = document.SelectSingleNode("/PluginManifest/Guid");
-                return guidNode != null
-                       && IsKnownPluginManifestGuid(
-                           guidNode.InnerText != null ? guidNode.InnerText.Trim() : string.Empty);
-            }
-            catch
-            {
-                return false;
-            }
+            return File.Exists(manifestPath) && ManifestMatchesCurrentPlugin(manifestPath);
         }
 
         private static bool ContainsPath(IEnumerable<string> paths, string candidatePath)
@@ -992,28 +1023,24 @@ namespace TorchDiscordSync.Plugin.Services
         {
             var archivePaths = new List<string>();
 
-            foreach (var hostBaseDirectory in hostBaseDirectories)
-            {
-                AddPluginArchiveCandidates(archivePaths, hostBaseDirectory);
-
-                try
-                {
-                    var parentDirectory = Path.GetDirectoryName(hostBaseDirectory);
-                    AddPluginArchiveCandidates(archivePaths, parentDirectory);
-                }
-                catch
-                {
-                }
-            }
-
             try
             {
+                foreach (var hostBaseDirectory in hostBaseDirectories)
+                {
+                    AddPluginArchiveCandidates(archivePaths, hostBaseDirectory);
+                
+                    var parentDirectory = Path.GetDirectoryName(hostBaseDirectory);
+                    AddPluginArchiveCandidates(archivePaths, parentDirectory);
+                
+                }
+            
                 var torchBaseDirectory = AppDomain.CurrentDomain.BaseDirectory;
                 if (!string.IsNullOrWhiteSpace(torchBaseDirectory))
                     AddPluginArchiveCandidates(archivePaths, Path.Combine(torchBaseDirectory, "Plugins"));
             }
-            catch
+            catch (Exception)
             {
+                // ignored
             }
 
             return archivePaths;
@@ -1024,9 +1051,164 @@ namespace TorchDiscordSync.Plugin.Services
             if (archivePaths == null || string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
                 return;
 
-            var archivePath = Path.Combine(directory, PluginArchiveFileName);
-            if (File.Exists(archivePath) && !ContainsPath(archivePaths, archivePath))
+            AddPluginArchiveCandidatesFromDirectory(archivePaths, directory);
+
+            try
+            {
+                foreach (var childDirectory in Directory.GetDirectories(directory))
+                {
+                    AddPluginArchiveCandidatesFromDirectory(archivePaths, childDirectory);
+                }
+            }
+            catch
+            {
+                // ignored
+            }
+        }
+
+        private static void AddPluginArchiveCandidatesFromDirectory(
+            List<string> archivePaths,
+            string directory)
+        {
+            if (TryGetPluginArchivePath(directory, out var archivePath)
+                && !ContainsPath(archivePaths, archivePath))
+            {
                 archivePaths.Add(archivePath);
+            }
+        }
+
+        private static bool TryGetPluginArchivePath(string directory, out string archivePath)
+        {
+            archivePath = null;
+
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+                return false;
+
+            foreach (var candidatePath in GetPluginArchiveCandidates(directory))
+            {
+                try
+                {
+                    if (!ArchiveContainsCurrentPlugin(candidatePath))
+                        continue;
+
+                    archivePath = candidatePath;
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    LoggerUtil.LogDebug(
+                        "[DISCORD_IPC] Failed to inspect candidate plugin archive "
+                        + candidatePath + ": " + ex.Message);
+                }
+            }
+
+            return false;
+        }
+
+        private static List<string> GetPluginArchiveCandidates(string directory)
+        {
+            var archivePaths = new List<string>();
+
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+                return archivePaths;
+
+            foreach (var archiveFileName in PluginArchiveFileNames)
+            {
+                var candidatePath = Path.Combine(directory, archiveFileName);
+                if (File.Exists(candidatePath) && !ContainsPath(archivePaths, candidatePath))
+                    archivePaths.Add(candidatePath);
+            }
+
+            try
+            {
+                foreach (var candidatePath in Directory.GetFiles(directory, "*.zip"))
+                {
+                    if (!ContainsPath(archivePaths, candidatePath))
+                        archivePaths.Add(candidatePath);
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogDebug(
+                    "[DISCORD_IPC] Failed to enumerate zip files in " + directory + ": "
+                    + ex.Message);
+            }
+
+            return archivePaths;
+        }
+
+        private static bool ManifestMatchesCurrentPlugin(string manifestPath)
+        {
+            if (string.IsNullOrWhiteSpace(manifestPath) || !File.Exists(manifestPath))
+                return false;
+
+            try
+            {
+                var document = new XmlDocument();
+                document.Load(manifestPath);
+                return XmlDocumentMatchesCurrentPlugin(document);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool ArchiveContainsCurrentPlugin(string archivePath)
+        {
+            if (string.IsNullOrWhiteSpace(archivePath) || !File.Exists(archivePath))
+                return false;
+
+            try
+            {
+                using (var stream = File.OpenRead(archivePath))
+                using (var archive = new ZipArchive(stream, ZipArchiveMode.Read))
+                {
+                    ZipArchiveEntry manifestEntry = null;
+                    bool foundHostEntrypoint = false;
+
+                    foreach (var entry in archive.Entries)
+                    {
+                        if (IsHostEntrypointFile(entry.Name))
+                            foundHostEntrypoint = true;
+
+                        if (manifestEntry == null
+                            && string.Equals(
+                                entry.Name,
+                                "manifest.xml",
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            manifestEntry = entry;
+                        }
+                    }
+
+                    if (manifestEntry == null)
+                        return foundHostEntrypoint;
+
+                    using (var manifestStream = manifestEntry.Open())
+                    {
+                        var document = new XmlDocument();
+                        document.Load(manifestStream);
+                        return XmlDocumentMatchesCurrentPlugin(document);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogDebug(
+                    "[DISCORD_IPC] Failed to inspect plugin archive " + archivePath + ": "
+                    + ex.Message);
+                return false;
+            }
+        }
+
+        private static bool XmlDocumentMatchesCurrentPlugin(XmlDocument document)
+        {
+            if (document == null)
+                return false;
+
+            var guidNode = document.SelectSingleNode("/PluginManifest/Guid");
+            return guidNode != null && IsKnownPluginManifestGuid(guidNode.InnerText.Trim());
         }
 
         private static bool TryStageBundledHostArtifacts(
@@ -1042,22 +1224,16 @@ namespace TorchDiscordSync.Plugin.Services
             if (string.IsNullOrWhiteSpace(hostBaseDirectory) || !Directory.Exists(hostBaseDirectory))
                 return false;
 
-            if (DirectoryContainsHostEntrypoint(hostBaseDirectory))
-            {
-                var stagedDirectory = StageBundledHostArtifacts(
-                    hostBaseDirectory,
-                    GetRootHostArtifactFiles(hostBaseDirectory));
-                if (TrySelectHostEntrypoint(
-                        stagedDirectory,
-                        out workingDirectory,
-                        out executablePath,
-                        out dllPath))
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            if (!DirectoryContainsHostEntrypoint(hostBaseDirectory)) return false;
+            var stagedDirectory = StageBundledHostArtifacts(
+                hostBaseDirectory,
+                GetRootHostArtifactFiles(hostBaseDirectory));
+            
+            return TrySelectHostEntrypoint(
+                stagedDirectory,
+                out workingDirectory,
+                out executablePath,
+                out dllPath);
         }
 
         private static bool TryStageBundledHostArchive(
@@ -1151,17 +1327,20 @@ namespace TorchDiscordSync.Plugin.Services
                 return null;
 
             var normalizedEntryName = archiveEntryName.Replace('\\', '/');
-            if (normalizedEntryName.EndsWith("/", StringComparison.Ordinal)
-                || normalizedEntryName.IndexOf('/') >= 0)
+            if (normalizedEntryName.EndsWith("/", StringComparison.Ordinal))
             {
                 return null;
             }
 
-            var targetRelativePath = normalizedEntryName.EndsWith(".payload", StringComparison.OrdinalIgnoreCase)
-                ? normalizedEntryName.Substring(0, normalizedEntryName.Length - ".payload".Length)
-                : normalizedEntryName;
+            var fileName = Path.GetFileName(normalizedEntryName);
+            if (string.IsNullOrWhiteSpace(fileName))
+                return null;
 
-            return IsRootHostArtifactFile(normalizedEntryName)
+            var targetRelativePath = fileName.EndsWith(".payload", StringComparison.OrdinalIgnoreCase)
+                ? fileName.Substring(0, fileName.Length - ".payload".Length)
+                : fileName;
+
+            return IsRootHostArtifactFile(fileName)
                    || IsRootHostArtifactFile(targetRelativePath)
                 ? targetRelativePath
                 : null;
@@ -1174,7 +1353,7 @@ namespace TorchDiscordSync.Plugin.Services
             // Torch loads plugin assemblies from the plugin install folder. Stage the
             // external .NET host into the writable instance data area before launching it.
             var stagedDirectory = Path.Combine(
-                TorchDiscordSync.Plugin.Config.MainConfig.GetPluginDirectory(),
+                Config.MainConfig.GetPluginDirectory(),
                 "runtime",
                 "DiscordHost");
             Directory.CreateDirectory(stagedDirectory);
@@ -1207,6 +1386,7 @@ namespace TorchDiscordSync.Plugin.Services
             out bool foundHostEntrypoint)
         {
             foundHostEntrypoint = false;
+            int copiedFileCount = 0;
             var stagedDirectory = GetStagedHostDirectory();
             Directory.CreateDirectory(stagedDirectory);
 
@@ -1238,7 +1418,22 @@ namespace TorchDiscordSync.Plugin.Services
                     }
 
                     File.SetLastWriteTimeUtc(destinationPath, entry.LastWriteTime.UtcDateTime);
+                    copiedFileCount++;
                 }
+            }
+
+            if (foundHostEntrypoint)
+            {
+                LoggerUtil.LogInfo(
+                    "[DISCORD_IPC] Staged " + copiedFileCount
+                    + " Discord host artifact(s) from archive " + archivePath
+                    + " to " + stagedDirectory);
+            }
+            else
+            {
+                LoggerUtil.LogWarning(
+                    "[DISCORD_IPC] Archive did not contain a Discord host entrypoint: "
+                    + archivePath);
             }
 
             return stagedDirectory;
@@ -1247,7 +1442,7 @@ namespace TorchDiscordSync.Plugin.Services
         private static string GetStagedHostDirectory()
         {
             return Path.Combine(
-                TorchDiscordSync.Plugin.Config.MainConfig.GetPluginDirectory(),
+                Config.MainConfig.GetPluginDirectory(),
                 "runtime",
                 "DiscordHost");
         }
@@ -1352,6 +1547,7 @@ namespace TorchDiscordSync.Plugin.Services
             }
             catch
             {
+                // ignored
             }
             finally
             {

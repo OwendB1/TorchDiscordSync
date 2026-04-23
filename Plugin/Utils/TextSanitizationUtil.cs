@@ -138,22 +138,19 @@ namespace TorchDiscordSync.Plugin.Utils
 
                 if (string.IsNullOrWhiteSpace(sanitized))
                 {
-                    LoggerUtil.LogWarning(string.Format(
-                        "[SANITIZE] Player name completely removed: '{0}' -> using 'Player'",
-                        playerName));
+                    LoggerUtil.LogWarning(
+                        $"[SANITIZE] Player name completely removed: '{playerName}' -> using 'Player'");
                     return "Player";
                 }
 
                 if (sanitized != playerName)
-                    LoggerUtil.LogDebug(string.Format(
-                        "[SANITIZE] Name cleaned: '{0}' -> '{1}'", playerName, sanitized));
+                    LoggerUtil.LogDebug($"[SANITIZE] Name cleaned: '{playerName}' -> '{sanitized}'");
 
                 return sanitized;
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogError(string.Format(
-                    "[SANITIZE] Error sanitizing name '{0}': {1}", playerName, ex.Message));
+                LoggerUtil.LogError($"[SANITIZE] Error sanitizing name '{playerName}': {ex.Message}");
                 return "Player";
             }
         }
@@ -176,8 +173,7 @@ namespace TorchDiscordSync.Plugin.Utils
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogError(string.Format(
-                    "[SANITIZE] Error sanitizing message: {0}", ex.Message));
+                LoggerUtil.LogError($"[SANITIZE] Error sanitizing message: {ex.Message}");
                 return message;
             }
         }
@@ -238,8 +234,7 @@ namespace TorchDiscordSync.Plugin.Utils
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogError(string.Format(
-                    "[SANITIZE] Error stripping emojis: {0}", ex.Message));
+                LoggerUtil.LogError($"[SANITIZE] Error stripping emojis: {ex.Message}");
                 return text;
             }
         }

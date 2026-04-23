@@ -716,7 +716,7 @@ namespace TorchDiscordSync.DiscordHost.Services
                             {
                                 await _client.StartAsync().ConfigureAwait(false);
                                 HostLogger.Info(
-                                    string.Format("Reconnect attempt {0}/5 requested.", attempt));
+                                    $"Reconnect attempt {attempt}/5 requested.");
                                 return;
                             }
                         }

@@ -56,7 +56,9 @@ namespace TorchDiscordSync.Plugin.Utils
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogError("[VersionUtil] Failed to load version from manifest: " + ex.Message);
+                LoggerUtil.LogException(
+                    "[VersionUtil] Failed to load version from manifest.",
+                    ex);
             }
 
             // _cachedVersion = "2.0.0";
@@ -94,64 +96,13 @@ namespace TorchDiscordSync.Plugin.Utils
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogError("[VersionUtil] Failed to load name from manifest: " + ex.Message);
+                LoggerUtil.LogException(
+                    "[VersionUtil] Failed to load name from manifest.",
+                    ex);
             }
 
             return "TDS";
         }
 
-        /// <summary>
-        /// Get author from manifest.xml
-        /// </summary>
-        public static string GetAuthor()
-        {
-            try
-            {
-                if (File.Exists(ManifestPath))
-                {
-                    XmlDocument doc = new XmlDocument();
-                    doc.Load(ManifestPath);
-
-                    XmlNode authorNode = doc.SelectSingleNode("//Author");
-                    if (authorNode != null && !string.IsNullOrEmpty(authorNode.InnerText))
-                    {
-                        return authorNode.InnerText.Trim();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[VersionUtil] Failed to load author from manifest: " + ex.Message);
-            }
-
-            return "TorchDiscordSync";
-        }
-
-        /// <summary>
-        /// Get description from manifest.xml
-        /// </summary>
-        public static string GetDescription()
-        {
-            try
-            {
-                if (File.Exists(ManifestPath))
-                {
-                    XmlDocument doc = new XmlDocument();
-                    doc.Load(ManifestPath);
-
-                    XmlNode descNode = doc.SelectSingleNode("//Description");
-                    if (descNode != null && !string.IsNullOrEmpty(descNode.InnerText))
-                    {
-                        return descNode.InnerText.Trim();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[VersionUtil] Failed to load description from manifest: " + ex.Message);
-            }
-
-            return "Advanced Space Engineers Discord Sync Plugin";
-        }
     }
 }

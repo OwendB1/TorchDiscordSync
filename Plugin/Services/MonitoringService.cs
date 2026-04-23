@@ -2,9 +2,9 @@
 using System;
 using System.Threading.Tasks;
 using System.Timers;
+using Sandbox.Game.World;
 using TorchDiscordSync.Plugin.Config;
 using TorchDiscordSync.Plugin.Utils;
-using Sandbox.Game.World;
 using VRage.Game.ModAPI;
 
 namespace TorchDiscordSync.Plugin.Services

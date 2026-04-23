@@ -1,13 +1,13 @@
 // Plugin/Services/DeathLocationService.cs
 using System;
 using System.Collections.Generic;
-using TorchDiscordSync.Plugin.Config;
-using TorchDiscordSync.Plugin.Models;
-using TorchDiscordSync.Plugin.Utils;
 using Sandbox.Game.Entities;
 using Sandbox.Game.Entities.Character;
 using Sandbox.Game.Entities.Planet;
 using Sandbox.ModAPI;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Models;
+using TorchDiscordSync.Plugin.Utils;
 using VRage.Game.ModAPI;
 using VRageMath;
 

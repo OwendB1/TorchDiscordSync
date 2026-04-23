@@ -1,10 +1,10 @@
 // Plugin/Utils/ChatUtils.cs
 using System;
 using System.Collections.Generic;
-using TorchDiscordSync.Plugin.Config;
-using TorchDiscordSync.Plugin.Services;
 using Sandbox.Game;
 using Sandbox.ModAPI;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Services;
 using VRage.Game.ModAPI;
 
 namespace TorchDiscordSync.Plugin.Utils

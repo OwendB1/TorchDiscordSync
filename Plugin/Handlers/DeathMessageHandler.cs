@@ -2,11 +2,11 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Sandbox.Game;
 using TorchDiscordSync.Plugin.Config;
 using TorchDiscordSync.Plugin.Models;
 using TorchDiscordSync.Plugin.Services;
 using TorchDiscordSync.Plugin.Utils;
-using Sandbox.Game;
 using VRage.Game.ModAPI;
 
 namespace TorchDiscordSync.Plugin.Handlers

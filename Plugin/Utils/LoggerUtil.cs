@@ -2,6 +2,7 @@
 /// Utility class for logging messages to console and file
 using System;
 using System.IO;
+using System.Text;
 using TorchDiscordSync.Plugin.Config;
 
 namespace TorchDiscordSync.Plugin.Utils
@@ -18,11 +19,14 @@ namespace TorchDiscordSync.Plugin.Utils
 
         static LoggerUtil()
         {
-            // Check if debug mode is enabled
             try
             {
-                string configDir = MainConfig.GetConfigDirectory();
-                string configPath = Path.Combine(configDir, "MainConfig.xml");
+                string configPath = Path.Combine(
+                    MainConfig.GetInstancePath(),
+                    MainConfig.PLUGIN_DIR_NAME,
+                    "configs",
+                    "MainConfig.xml");
+
                 if (File.Exists(configPath))
                 {
                     string configContent = File.ReadAllText(configPath);
@@ -31,9 +35,13 @@ namespace TorchDiscordSync.Plugin.Utils
             }
             catch
             {
-                // Ignore errors in debug mode detection
-                LogWarning("Failed to determine debug mode from config. Defaulting to false.");
+                _debugMode = false;
             }
+        }
+
+        public static void SetDebugMode(bool enabled)
+        {
+            _debugMode = enabled;
         }
 
         /// <summary>
@@ -43,11 +51,12 @@ namespace TorchDiscordSync.Plugin.Utils
         {
             try
             {
-                string logDir = MainConfig.GetLogDirectory();
-                if (!Directory.Exists(logDir))
-                    Directory.CreateDirectory(logDir);
+                string logDir = Path.Combine(
+                    MainConfig.GetInstancePath(),
+                    MainConfig.PLUGIN_DIR_NAME,
+                    "Logging");
+                Directory.CreateDirectory(logDir);
 
-                // Create new log file with timestamp if not already created
                 if (string.IsNullOrEmpty(_currentLogFile))
                 {
                     string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
@@ -74,15 +83,21 @@ namespace TorchDiscordSync.Plugin.Utils
         public static void Log(string category, string message)
         {
             var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-            string consoleMessage = $"{PREFIX} [{timestamp}] [{category}] {message}";
-            
-            // Write to console
-            Console.WriteLine(consoleMessage);
-            
-            // Write to file (thread-safe)
+            var safeMessage = message ?? string.Empty;
+            string consoleMessage = $"{PREFIX} [{timestamp}] [{category}] {safeMessage}";
+
             try
             {
-                string fileMessage = $"[{timestamp}] [{category}] {message}";
+                Console.WriteLine(consoleMessage);
+            }
+            catch
+            {
+                // ignored
+            }
+
+            try
+            {
+                string fileMessage = $"[{timestamp}] [{category}] {safeMessage}";
                 lock (_lock)
                 {
                     string logFilePath = GetLogFilePath();
@@ -119,6 +134,11 @@ namespace TorchDiscordSync.Plugin.Utils
             Log("ERROR", message);
         }
 
+        public static void LogError(string message, Exception ex)
+        {
+            Log("ERROR", AppendException(message, ex));
+        }
+
         /// <summary>
         /// Log a debug message (only when debug mode is enabled)
         /// </summary>
@@ -135,6 +155,47 @@ namespace TorchDiscordSync.Plugin.Utils
         public static void LogSuccess(string message)
         {
             Log("SUCCESS", message);
+        }
+
+        public static void LogException(string context, Exception ex)
+        {
+            Log("ERROR", AppendException(context, ex));
+        }
+
+        private static string AppendException(string context, Exception ex)
+        {
+            if (ex == null)
+                return context ?? string.Empty;
+
+            var builder = new StringBuilder();
+            if (!string.IsNullOrWhiteSpace(context))
+            {
+                builder.Append(context);
+                builder.Append(" | ");
+            }
+
+            int depth = 0;
+            var current = ex;
+            while (current != null)
+            {
+                if (depth > 0)
+                    builder.Append(" --> ");
+
+                builder.Append(current.GetType().FullName);
+                builder.Append(": ");
+                builder.Append(current.Message);
+
+                if (!string.IsNullOrWhiteSpace(current.StackTrace))
+                {
+                    builder.Append(Environment.NewLine);
+                    builder.Append(current.StackTrace);
+                }
+
+                current = current.InnerException;
+                depth++;
+            }
+
+            return builder.ToString();
         }
     }
 }

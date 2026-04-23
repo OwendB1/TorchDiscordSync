@@ -20,7 +20,7 @@ namespace TorchDiscordSync.DiscordHost.Logging
                 var timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
                 _logFilePath = Path.Combine(
                     logDirectory,
-                    string.Format("{0}_TDS_discord_host.log", timestamp));
+                    $"{timestamp}_TDS_discord_host.log");
             }
             catch
             {
@@ -51,7 +51,7 @@ namespace TorchDiscordSync.DiscordHost.Logging
         private static void Write(string level, string message)
         {
             var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-            var line = string.Format("[DiscordHost] [{0}] [{1}] {2}", timestamp, level, message);
+            var line = $"[DiscordHost] [{timestamp}] [{level}] {message}";
 
             try
             {

@@ -3,12 +3,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using TorchDiscordSync.Plugin.Config;
-using TorchDiscordSync.Plugin.Models;
-using TorchDiscordSync.Plugin.Utils;
 using Sandbox.Game.Multiplayer;
 using Sandbox.Game.World;
 using Sandbox.ModAPI;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Models;
+using TorchDiscordSync.Plugin.Utils;
 using VRage.Game.ModAPI;
 
 namespace TorchDiscordSync.Plugin.Services

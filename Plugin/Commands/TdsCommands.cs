@@ -1,8 +1,8 @@
 using System.Linq;
-using TorchDiscordSync;
-using TorchDiscordSync.Plugin.Services;
 using Torch.Commands;
 using Torch.Commands.Permissions;
+using TorchDiscordSync;
+using TorchDiscordSync.Plugin.Services;
 using VRage.Game.ModAPI;
 
 namespace TorchDiscordSync.Plugin.Commands

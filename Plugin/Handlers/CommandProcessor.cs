@@ -1,12 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Torch.API.Managers;
 using TorchDiscordSync.Plugin.Config;
 using TorchDiscordSync.Plugin.Core;
 using TorchDiscordSync.Plugin.Models;
 using TorchDiscordSync.Plugin.Services;
 using TorchDiscordSync.Plugin.Utils;
-using Torch.API.Managers;
 
 namespace TorchDiscordSync.Plugin.Handlers
 {
@@ -184,13 +184,27 @@ namespace TorchDiscordSync.Plugin.Handlers
             return text.Substring(0, maxLength - 3) + "...";
         }
 
+        private bool IsUserAdmin(long steamId)
+        {
+            if (_config?.AdminSteamIDs == null || _config.AdminSteamIDs.Length == 0)
+                return false;
+
+            for (int i = 0; i < _config.AdminSteamIDs.Length; i++)
+            {
+                if (_config.AdminSteamIDs[i] == steamId)
+                    return true;
+            }
+
+            return false;
+        }
+
         public void HandleLegacyChatCommand(string command, long playerSteamId, string playerName)
         {
             try
             {
                 var request = new TdsCommandRequest
                 {
-                    IsAdmin = CommandAuthorizationUtil.IsUserAdmin(playerSteamId, _config.AdminSteamIDs),
+                    IsAdmin = IsUserAdmin(playerSteamId),
                     PlayerName = playerName,
                     SteamId = playerSteamId,
                     Respond = message => ChatUtils.SendInfo(message, playerSteamId),

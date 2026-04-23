@@ -3,14 +3,14 @@ using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using TorchDiscordSync.Plugin.Config;
-using TorchDiscordSync.Plugin.Handlers;
-using TorchDiscordSync.Plugin.Models;
-using TorchDiscordSync.Plugin.Utils;
 using Sandbox.Game;
 using Sandbox.Game.World;
 using Sandbox.ModAPI;
 using Torch.API;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Handlers;
+using TorchDiscordSync.Plugin.Models;
+using TorchDiscordSync.Plugin.Utils;
 using VRage.Game.ModAPI;
 using VRageMath;
 

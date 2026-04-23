@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using TorchDiscordSync.Plugin.Config;
 using TorchDiscordSync.Plugin.Utils;
 using TorchDiscordSync.Shared.Ipc;
 
@@ -17,13 +16,9 @@ namespace TorchDiscordSync.Plugin.Services
         private const int DISCORD_MESSAGE_MAX_LENGTH = 2000;
 
         private readonly DiscordBotService _botService;
-        private readonly DiscordConfig _discordConfig;
-
         public DiscordService(DiscordBotService botService)
         {
             _botService = botService;
-            MainConfig cfg = MainConfig.Load();
-            _discordConfig = cfg != null ? cfg.Discord : new DiscordConfig();
         }
 
         public bool IsConnected
@@ -313,19 +308,6 @@ namespace TorchDiscordSync.Plugin.Services
             }
         }
 
-        public void SendMessage(string message)
-        {
-            try
-            {
-                if (_discordConfig != null && _discordConfig.StatusChannelId != 0)
-                    _ = SendLogAsync(_discordConfig.StatusChannelId, message);
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogError("[DISCORD] Send message error: " + ex.Message);
-            }
-        }
-
         public async Task<bool> AssignRoleToUserAsync(ulong userId, ulong roleId)
         {
             try
@@ -455,9 +437,5 @@ namespace TorchDiscordSync.Plugin.Services
             }
         }
 
-        public DiscordBotService GetBotService()
-        {
-            return _botService;
-        }
     }
 }

@@ -1,25 +1,24 @@
 // Plugin/index.cs
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Timers;
-using TorchDiscordSync.Plugin.Config;
-using TorchDiscordSync.Plugin.Core;
-using TorchDiscordSync.Plugin.Handlers;
-using TorchDiscordSync.Plugin.Models;
-using TorchDiscordSync.Plugin.Services;
-using TorchDiscordSync.Plugin.Utils;
-using TorchDiscordSync.Shared.Ipc;
-using Sandbox.Game.World;
+using Sandbox.Game;
 using Sandbox.ModAPI;
 using Torch;
 using Torch.API;
 using Torch.API.Managers;
-using Torch.API.Plugins;
 using Torch.API.Session;
-using Torch.Commands;
 using Torch.Managers.ChatManager;
+using TorchDiscordSync.Plugin.Config;
+using TorchDiscordSync.Plugin.Core;
+using TorchDiscordSync.Plugin.Handlers;
+using TorchDiscordSync.Plugin.Services;
+using TorchDiscordSync.Plugin.Utils;
+using TorchDiscordSync.Shared.Ipc;
+using VRage.Game.ModAPI;
 
 namespace TorchDiscordSync
 {
@@ -52,7 +51,6 @@ namespace TorchDiscordSync
         // ---- handlers ----
         private CommandProcessor            _commandProcessor;
         private EventManager                _eventManager;
-        private ChatModerator               _chatModerator;
         private DiscordAdminCommandService  _adminCommandService;
 
         // ---- configuration ----
@@ -94,6 +92,7 @@ namespace TorchDiscordSync
                     LoggerUtil.LogError("Failed to load configuration!");
                     return;
                 }
+                LoggerUtil.SetDebugMode(_config.Debug);
                 LoggerUtil.LogInfo("Configuration loaded - Debug mode: " + _config.Debug);
 
                 // ---- database (XML-based) ----
@@ -130,7 +129,7 @@ namespace TorchDiscordSync
                 }
 
                 // Torch.TorchBase is required by PlayerTrackingService
-                var torchBase = torch as Torch.TorchBase;
+                var torchBase = torch as TorchBase;
                 if (torchBase == null)
                 {
                     LoggerUtil.LogError(
@@ -179,8 +178,7 @@ namespace TorchDiscordSync
                         // Global Discord channel → game global chat
                         if (channelId == _config.Discord.ChatChannelId)
                         {
-                            await _chatSync.SendDiscordMessageToGameAsync(
-                                msg.AuthorUsername, msg.Content).ConfigureAwait(false);
+                            _chatSync.SendDiscordMessageToGame(msg.AuthorUsername, msg.Content);
                             LoggerUtil.LogDebug(
                                 "[DISCORD>GAME] Forwarded message from " +
                                 msg.AuthorUsername);
@@ -248,7 +246,6 @@ namespace TorchDiscordSync
                 LoggerUtil.LogInfo("[INIT] CommandProcessor created");
 
                 _eventManager = new EventManager(_config, _discordWrapper, _eventLog);
-                _chatModerator = new ChatModerator(_config, _discordWrapper, _db);
 
                 LoggerUtil.LogSuccess("All services initialized");
 
@@ -296,8 +293,7 @@ namespace TorchDiscordSync
                     _syncTimer = new Timer(syncInterval);
                     _syncTimer.Elapsed  += OnSyncTimerElapsed;
                     _syncTimer.AutoReset = true;
-                    LoggerUtil.LogInfo(string.Format(
-                        "Faction sync timer created (interval: {0}ms)", syncInterval));
+                    LoggerUtil.LogInfo($"Faction sync timer created (interval: {syncInterval}ms)");
                 }
 
                 _isInitialized = true;
@@ -309,8 +305,7 @@ namespace TorchDiscordSync
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogError("Plugin initialization failed: " + ex.Message);
-                LoggerUtil.LogError("Stack trace: " + ex.StackTrace);
+                LoggerUtil.LogException("Plugin initialization failed.", ex);
                 _isInitialized = false;
             }
         }
@@ -426,6 +421,7 @@ namespace TorchDiscordSync
             _config.DamageHistoryMaxSeconds = newConfig.DamageHistoryMaxSeconds;
             _config.DataStorage = newConfig.DataStorage;
             _config.PluginVersion = newConfig.PluginVersion;
+            LoggerUtil.SetDebugMode(_config.Debug);
 
             if (_config.Discord != null)
             {
@@ -437,7 +433,7 @@ namespace TorchDiscordSync
                 }
                 catch (Exception ex)
                 {
-                    LoggerUtil.LogError("[DISCORD_IPC] Failed to push config reload: " + ex.Message);
+                    LoggerUtil.LogException("[DISCORD_IPC] Failed to push config reload.", ex);
                 }
             }
 
@@ -662,9 +658,7 @@ namespace TorchDiscordSync
                         if (_orchestrator != null)
                         {
                             await _orchestrator.CheckServerStatusAsync(stableSimSpeed).ConfigureAwait(false);
-                            LoggerUtil.LogSuccess(string.Format(
-                                "[STARTUP] Post-load status reported. SimSpeed: {0:F2}",
-                                stableSimSpeed));
+                            LoggerUtil.LogSuccess($"[STARTUP] Post-load status reported. SimSpeed: {stableSimSpeed:F2}");
                         }
                     }
                     catch (Exception ex)
@@ -678,8 +672,7 @@ namespace TorchDiscordSync
                 var factions = _factionSync.LoadFactionsFromGame();
                 if (factions.Count > 0)
                 {
-                    LoggerUtil.LogInfo(string.Format(
-                        "[STARTUP] Found {0} player factions", factions.Count));
+                    LoggerUtil.LogInfo($"[STARTUP] Found {factions.Count} player factions");
                     _orchestrator.ExecuteFullSyncAsync(factions).Wait();
                 }
                 else
@@ -692,9 +685,8 @@ namespace TorchDiscordSync
                 if (_syncTimer != null && !_syncTimer.Enabled)
                 {
                     _syncTimer.Start();
-                    LoggerUtil.LogSuccess(string.Format(
-                        "[STARTUP] Sync timer started (interval: {0}s)",
-                        _config.Discord.SyncIntervalSeconds));
+                    LoggerUtil.LogSuccess(
+                        $"[STARTUP] Sync timer started (interval: {_config.Discord.SyncIntervalSeconds}s)");
                 }
 
                 LoggerUtil.LogSuccess("[STARTUP] Server startup sync complete!");
@@ -851,7 +843,7 @@ namespace TorchDiscordSync
         {
             try
             {
-                var players = new List<VRage.Game.ModAPI.IMyPlayer>();
+                var players = new List<IMyPlayer>();
                 MyAPIGateway.Players.GetPlayers(players);
 
                 var player = players.FirstOrDefault(p => (long)p.SteamUserId == steamID);
@@ -862,7 +854,7 @@ namespace TorchDiscordSync
                     ? "[OK] Verification successful! Discord account linked."
                     : "[FAIL] Verification failed: " + message;
 
-                Sandbox.Game.MyVisualScriptLogicProvider.SendChatMessage(
+                MyVisualScriptLogicProvider.SendChatMessage(
                     notificationMsg, "TDS", player.Character.EntityId, "Blue");
                 LoggerUtil.LogSuccess("[VERIFY_NOTIFY] Sent to " + playerName);
             }

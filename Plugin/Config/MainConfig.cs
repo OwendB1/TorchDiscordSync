@@ -61,9 +61,9 @@ namespace TorchDiscordSync.Plugin.Config
                 }
                 catch (Exception ex)
                 {
-                    LoggerUtil.LogError(
-                        $"Failed to create plugin directory {pluginDir}: {ex.Message}"
-                    );
+                    LoggerUtil.LogException(
+                        $"Failed to create plugin directory {pluginDir}.",
+                        ex);
                 }
             }
 
@@ -86,9 +86,9 @@ namespace TorchDiscordSync.Plugin.Config
                 }
                 catch (Exception ex)
                 {
-                    LoggerUtil.LogError(
-                        $"Failed to create config directory {configDir}: {ex.Message}"
-                    );
+                    LoggerUtil.LogException(
+                        $"Failed to create config directory {configDir}.",
+                        ex);
                 }
             }
 
@@ -111,7 +111,9 @@ namespace TorchDiscordSync.Plugin.Config
                 }
                 catch (Exception ex)
                 {
-                    LoggerUtil.LogError($"Failed to create data directory {dataDir}: {ex.Message}");
+                    LoggerUtil.LogException(
+                        $"Failed to create data directory {dataDir}.",
+                        ex);
                 }
             }
 
@@ -134,7 +136,9 @@ namespace TorchDiscordSync.Plugin.Config
                 }
                 catch (Exception ex)
                 {
-                    LoggerUtil.LogError($"Failed to create log directory {logDir}: {ex.Message}");
+                    LoggerUtil.LogException(
+                        $"Failed to create log directory {logDir}.",
+                        ex);
                 }
             }
 
@@ -271,7 +275,7 @@ namespace TorchDiscordSync.Plugin.Config
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogError("Failed to load MainConfig: " + ex.Message);
+                LoggerUtil.LogException("Failed to load MainConfig.", ex);
             }
             return new MainConfig();
         }
@@ -295,7 +299,7 @@ namespace TorchDiscordSync.Plugin.Config
             }
             catch (Exception ex)
             {
-                LoggerUtil.LogError("Failed to save MainConfig: " + ex.Message);
+                LoggerUtil.LogException("Failed to save MainConfig.", ex);
             }
         }
     }
