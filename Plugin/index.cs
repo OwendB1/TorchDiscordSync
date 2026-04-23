@@ -383,7 +383,6 @@ namespace TorchDiscordSync
 
             _config.Enabled = newConfig.Enabled;
             _config.Debug = newConfig.Debug;
-            _config.SyncIntervalSeconds = newConfig.SyncIntervalSeconds;
             _config.AdminSteamIDs = newConfig.AdminSteamIDs;
             _config.Discord = newConfig.Discord;
             _config.Chat = newConfig.Chat;

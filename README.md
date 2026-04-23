@@ -54,7 +54,7 @@ Unlike simple chat relays, **TorchDiscordSync** focuses on *deep game integratio
 | Data Storage – XML | ✅ | Default, zero-dependency storage |
 | Data Storage – SQLite | ✅ | Opt-in; requires external DLL (see below) |
 | Event Logging | ✅ | Structured log to DB + Discord staff channel |
-| Security & Blacklist | ✅ | Sanitisation, content filtering, blacklist config |
+| Security & Sanitisation | ✅ | Sanitisation, content filtering, loop protection |
 
 ---
 
@@ -268,7 +268,6 @@ Configuration files are loaded from the plugin's data directory on startup and c
 | :--- | :--- |
 | `config.xml` | Discord token, channel IDs, admin SteamIDs, feature toggles, thresholds |
 | `DeathMessages.xml` | Per-death-type message templates |
-| `Blacklist.xml` | Word/phrase blacklist for chat moderation |
 
 Key settings:
 

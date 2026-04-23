@@ -1,6 +1,7 @@
 // Plugin/Config/MainConfig.cs
 using System;
 using System.IO;
+using System.Xml;
 using System.Xml.Serialization;
 using TorchDiscordSync.Plugin.Utils;
 
@@ -155,13 +156,6 @@ namespace TorchDiscordSync.Plugin.Config
         [XmlElement]
         public bool Debug { get; set; }
 
-        /// <summary>
-        /// Deprecated: moved to Discord.SyncIntervalSeconds.
-        /// Kept for backward XML compatibility – if non-zero, copied to Discord.SyncIntervalSeconds on load.
-        /// </summary>
-        [XmlElement]
-        public int SyncIntervalSeconds { get; set; }
-
         [XmlArray("AdminSteamIDs")]
         [XmlArrayItem("SteamID")]
         public long[] AdminSteamIDs { get; set; }
@@ -213,7 +207,6 @@ namespace TorchDiscordSync.Plugin.Config
         {
             Enabled = true;
             Debug = false;
-            SyncIntervalSeconds = 30;
             AdminSteamIDs = new long[] { 
                 76561198020205461, // Replace with actual admin SteamIDs
                 76561198000000001  // Add actual admin SteamIDs here
@@ -233,6 +226,7 @@ namespace TorchDiscordSync.Plugin.Config
             {
                 if (File.Exists(ConfigPath))
                 {
+                    int legacyRootSyncInterval = TryReadLegacyRootSyncInterval();
                     XmlSerializer serializer = new XmlSerializer(typeof(MainConfig));
                     using (FileStream fs = new FileStream(ConfigPath, FileMode.Open))
                     {
@@ -242,13 +236,8 @@ namespace TorchDiscordSync.Plugin.Config
                         if (config.Discord == null)
                             config.Discord = new DiscordConfig();
 
-                        // Migration: root SyncIntervalSeconds → Discord.SyncIntervalSeconds
-                        if (config.SyncIntervalSeconds > 0)
-                        {
-                            if (config.Discord.SyncIntervalSeconds <= 0)
-                                config.Discord.SyncIntervalSeconds = config.SyncIntervalSeconds;
-                            config.SyncIntervalSeconds = 0; // clear root field
-                        }
+                        if (config.Discord.SyncIntervalSeconds <= 0 && legacyRootSyncInterval > 0)
+                            config.Discord.SyncIntervalSeconds = legacyRootSyncInterval;
                         if (config.Discord.SyncIntervalSeconds <= 0)
                             config.Discord.SyncIntervalSeconds = 30;
                         if (config.Discord.PresenceUpdateIntervalSeconds <= 0)
@@ -269,6 +258,24 @@ namespace TorchDiscordSync.Plugin.Config
                 LoggerUtil.LogException("Failed to load MainConfig.", ex);
             }
             return new MainConfig();
+        }
+
+        private static int TryReadLegacyRootSyncInterval()
+        {
+            try
+            {
+                var document = new XmlDocument();
+                document.Load(ConfigPath);
+                var node = document.DocumentElement?.SelectSingleNode("SyncIntervalSeconds");
+                if (node == null)
+                    return 0;
+
+                return int.TryParse(node.InnerText, out var seconds) ? seconds : 0;
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         // Updated Save method to use correct path
@@ -369,27 +376,6 @@ namespace TorchDiscordSync.Plugin.Config
         public bool Enabled { get; set; }
 
         [XmlElement]
-        public bool EnableModeration { get; set; }
-
-        [XmlElement]
-        public int MaxWarningsBeforeMute { get; set; }
-
-        [XmlElement]
-        public int MuteDurationMinutes { get; set; }
-
-        [XmlElement]
-        public int MaxMutesBeforeKick { get; set; }
-
-        [XmlElement]
-        public string WarningMessage { get; set; }
-
-        [XmlElement]
-        public string MuteMessage { get; set; }
-
-        [XmlElement]
-        public string KickMessage { get; set; }
-
-        [XmlElement]
         public ulong AdminLogChannelId { get; set; }
 
         [XmlElement]
@@ -447,13 +433,6 @@ namespace TorchDiscordSync.Plugin.Config
             GlobalColor = "White";
             FactionColor = "Green";
             StripEmojisForInGameChat = true;
-            EnableModeration = false;
-            MaxWarningsBeforeMute = 3;
-            MuteDurationMinutes = 10;
-            MaxMutesBeforeKick = 2;
-            WarningMessage = "?? Please avoid using inappropriate language.";
-            MuteMessage = "?? You have been muted for {minutes} minutes due to repeated violations.";
-            KickMessage = "?? You have been removed from the channel for repeated violations.";
             AdminLogChannelId = 0;
         }
     }
