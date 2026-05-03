@@ -24,12 +24,5 @@ namespace TorchDiscordSync.Plugin.Models
         [XmlArrayItem("Death")]
         public List<DeathHistoryModel> DeathHistory { get; set; } = new List<DeathHistoryModel>();
 
-        [XmlArray("Verifications")]
-        [XmlArrayItem("Verification")]
-        public List<VerificationModel> Verifications { get; set; } = new List<VerificationModel>();
-
-        [XmlArray("VerificationHistory")]
-        [XmlArrayItem("Entry")]
-        public List<VerificationHistoryModel> VerificationHistory { get; set; } = new List<VerificationHistoryModel>();
     }
 }

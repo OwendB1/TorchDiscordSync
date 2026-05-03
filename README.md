@@ -285,7 +285,7 @@ Configurable recurring Discord embeds (rules, event notices, maintenance windows
 Detect sustained PvP between faction grids and post live "War Status" updates to Discord.
 
 ### Web Dashboard *(long-term)*
-A lightweight read-only web panel fed by exported XML data: live stats, faction standings, kill history, verification status — no Discord required.
+A lightweight read-only web panel fed by exported XML data: live stats, faction standings, kill history, sync status — no Discord required.
 
 ### Multi-Server Support
 Route one Discord bot across multiple Torch instances with per-server channel configuration.
