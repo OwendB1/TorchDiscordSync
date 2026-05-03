@@ -12,12 +12,6 @@ namespace TorchDiscordSync.Plugin.Services
 {
     public class DatabaseService
     {
-        // ============================================================
-        // SQLITE PRIMARY (optional, controlled by config UseSQLite)
-        // ============================================================
-        private SqliteDatabaseService _sqlite;
-        private bool _usingSQLite = false;
-
         // VerificationData.xml - only verification events (history). No duplicate of VerificationPlayers.xml.
         private readonly string _verificationDataPath;
         private VerificationDataModel _verificationData;
@@ -40,12 +34,15 @@ namespace TorchDiscordSync.Plugin.Services
         private VerificationPlayersData _verificationPlayersData;
 
         /// <summary>
-        /// Init database service. When config.DataStorage.UseSQLite=true (default), SQLite is used as
-        /// primary storage. XML files are always loaded as fallback in case SQLite fails.
+        /// Init XML-backed database service.
         /// </summary>
         public DatabaseService(string configPath = null)
         {
             var dataDir = MainConfig.GetDataDirectory();
+            var legacySqlitePath = Path.Combine(dataDir, "TorchDiscordSync.db");
+
+            if (File.Exists(legacySqlitePath))
+                LoggerUtil.LogWarning($"[DB] Legacy SQLite database detected at {legacySqlitePath}. XML storage is now authoritative.");
 
             _verificationDataPath = Path.Combine(dataDir, "VerificationData.xml");
             _factionDataPath = Path.Combine(dataDir, "FactionData.xml");
@@ -68,34 +65,6 @@ namespace TorchDiscordSync.Plugin.Services
 
             _verificationPlayersPath = Path.Combine(dataDir, "VerificationPlayers.xml");
             LoadVerificationPlayersFromXml();
-
-            // ============================================================
-            // SQLITE INITIALIZATION
-            // ============================================================
-            var cfg = MainConfig.Load();
-            var sqliteEnabled = cfg?.DataStorage?.UseSQLite ?? true;
-
-            if (sqliteEnabled)
-            {
-                LoggerUtil.LogDebug("[DB] SQLite is ENABLED in config (UseSQLite=true). Initializing...");
-                try
-                {
-                    _sqlite = new SqliteDatabaseService(dataDir);
-                    _usingSQLite = true;
-                    LoggerUtil.LogSuccess("[DB] SQLite initialized successfully – using SQLite as PRIMARY database.");
-                    LoggerUtil.LogDebug("[DB] XML files remain available as fallback storage.");
-                }
-                catch (Exception ex)
-                {
-                    LoggerUtil.LogError($"[DB] SQLite initialization FAILED – falling back to XML storage. Error: {ex.Message}");
-                    _sqlite = null;
-                    _usingSQLite = false;
-                }
-            }
-            else
-            {
-                LoggerUtil.LogInfo("[DB] SQLite is DISABLED in config (UseSQLite=false) – using XML storage.");
-            }
         }
 
         // ============================================================
@@ -323,23 +292,10 @@ namespace TorchDiscordSync.Plugin.Services
         }
 
         /// <summary>
-        /// Saves or updates a faction in the database. Routes to SQLite (primary) or XML (fallback).
+        /// Saves or updates a faction in XML storage.
         /// </summary>
         public void SaveFaction(FactionModel faction)
         {
-            if (_usingSQLite)
-            {
-                try
-                {
-                    _sqlite.SaveFaction(faction);
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    LoggerUtil.LogError($"[DB] SQLite SaveFaction failed, falling back to XML: {ex.Message}");
-                }
-            }
-
             lock (_lock)
             {
                 var existing = _factionData.Factions.FirstOrDefault(f => f.FactionID == faction.FactionID);
@@ -377,11 +333,6 @@ namespace TorchDiscordSync.Plugin.Services
         /// </summary>
         public FactionModel GetFaction(int factionID)
         {
-            if (_usingSQLite)
-            {
-                try { return _sqlite.GetFaction(factionID); }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite GetFaction fallback: {ex.Message}"); }
-            }
             return _factionData.Factions.FirstOrDefault(f => f.FactionID == factionID);
         }
 
@@ -390,11 +341,6 @@ namespace TorchDiscordSync.Plugin.Services
         /// </summary>
         public bool FactionExists(int factionID)
         {
-            if (_usingSQLite)
-            {
-                try { return _sqlite.FactionExists(factionID); }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite FactionExists fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 return _factionData.Factions.Any(f => f.FactionID == factionID);
@@ -403,11 +349,6 @@ namespace TorchDiscordSync.Plugin.Services
 
         public List<FactionModel> GetAllFactions()
         {
-            if (_usingSQLite)
-            {
-                try { return _sqlite.GetAllFactions(); }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite GetAllFactions fallback: {ex.Message}"); }
-            }
             return new List<FactionModel>(_factionData.Factions);
         }
 
@@ -416,15 +357,6 @@ namespace TorchDiscordSync.Plugin.Services
         /// </summary>
         public void DeleteFaction(int factionID)
         {
-            if (_usingSQLite)
-            {
-                try
-                {
-                    _sqlite.DeleteFaction(factionID);
-                    return;
-                }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite DeleteFaction fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 _factionData.Factions.RemoveAll(f => f.FactionID == factionID);
@@ -438,11 +370,6 @@ namespace TorchDiscordSync.Plugin.Services
         public FactionModel GetFactionByTag(string tag)
         {
             if (string.IsNullOrEmpty(tag)) return null;
-            if (_usingSQLite)
-            {
-                try { return _sqlite.GetFactionByTag(tag); }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite GetFactionByTag fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 return _factionData.Factions.FirstOrDefault(f => f.Tag == tag);
@@ -455,11 +382,6 @@ namespace TorchDiscordSync.Plugin.Services
         public FactionModel GetFactionByGameChatId(long gameFactionChatId)
         {
             if (gameFactionChatId == 0) return null;
-            if (_usingSQLite)
-            {
-                try { return _sqlite.GetFactionByGameChatId(gameFactionChatId); }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite GetFactionByGameChatId fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 return _factionData.Factions.FirstOrDefault(f => f.GameFactionChatId == gameFactionChatId);
@@ -467,20 +389,10 @@ namespace TorchDiscordSync.Plugin.Services
         }
 
         /// <summary>
-        /// Saves or updates a player in the database. Routes to SQLite (primary) or XML (fallback).
+        /// Saves or updates a player in XML storage.
         /// </summary>
         public void SavePlayer(PlayerModel player)
         {
-            if (_usingSQLite)
-            {
-                try
-                {
-                    _sqlite.SavePlayer(player);
-                    return;
-                }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite SavePlayer fallback: {ex.Message}"); }
-            }
-
             lock (_lock)
             {
                 var existing = _playerData.Players.FirstOrDefault(p => p.SteamID == player.SteamID);
@@ -508,21 +420,11 @@ namespace TorchDiscordSync.Plugin.Services
         /// </summary>
         public PlayerModel GetPlayerBySteamID(long steamID)
         {
-            if (_usingSQLite)
-            {
-                try { return _sqlite.GetPlayerBySteamID(steamID); }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite GetPlayerBySteamID fallback: {ex.Message}"); }
-            }
             return _playerData.Players.FirstOrDefault(p => p.SteamID == steamID);
         }
 
         public void LogEvent(EventLogModel evt)
         {
-            if (_usingSQLite)
-            {
-                try { _sqlite.LogEvent(evt); return; }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite LogEvent fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 _eventData.EventLogs.Add(evt);
@@ -541,11 +443,6 @@ namespace TorchDiscordSync.Plugin.Services
             string location = null
         )
         {
-            if (_usingSQLite)
-            {
-                try { _sqlite.LogDeath(killerSteamID, victimSteamID, deathType, weapon, location); return; }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite LogDeath fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 var entry = new DeathHistoryModel
@@ -564,11 +461,6 @@ namespace TorchDiscordSync.Plugin.Services
 
         public DeathHistoryModel GetLastKill(long killerSteamID, long victimSteamID)
         {
-            if (_usingSQLite)
-            {
-                try { return _sqlite.GetLastKill(killerSteamID, victimSteamID); }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite GetLastKill fallback: {ex.Message}"); }
-            }
             return _eventData
                 .DeathHistory.Where(d =>
                     d.KillerSteamID == killerSteamID && d.VictimSteamID == victimSteamID
@@ -579,15 +471,6 @@ namespace TorchDiscordSync.Plugin.Services
 
         public void ClearAllData()
         {
-            if (_usingSQLite)
-            {
-                try
-                {
-                    _sqlite.ClearAllData();
-                    // Also clear XML in-memory + files for consistency
-                }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite ClearAllData fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 _factionData = new FactionDataModel();
@@ -603,15 +486,10 @@ namespace TorchDiscordSync.Plugin.Services
         // VERIFICATION EVENTS - VerificationData.xml (no duplicate with VerificationPlayers.xml)
         // ============================================================
         /// <summary>
-        /// Saves verification event. Routes to SQLite (primary) or VerificationData.xml (fallback).
+        /// Saves verification event to VerificationData.xml.
         /// </summary>
         public void SaveVerificationHistory(VerificationHistoryModel entry)
         {
-            if (_usingSQLite)
-            {
-                try { _sqlite.SaveVerificationHistory(entry); return; }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite SaveVerificationHistory fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 if (entry == null) return;
@@ -628,11 +506,6 @@ namespace TorchDiscordSync.Plugin.Services
 
         public List<VerificationHistoryModel> GetVerificationHistory(long steamID)
         {
-            if (_usingSQLite)
-            {
-                try { return _sqlite.GetVerificationHistory(steamID); }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite GetVerificationHistory fallback: {ex.Message}"); }
-            }
             return _verificationData
                 .VerificationHistory.Where(v => v.SteamID == steamID)
                 .OrderByDescending(v => v.VerifiedAt)
@@ -705,15 +578,6 @@ namespace TorchDiscordSync.Plugin.Services
             string gamePlayerName = null
         )
         {
-            if (_usingSQLite)
-            {
-                try
-                {
-                    _sqlite.AddPendingVerification(steamID, discordUsername, verificationCode, expirationMinutes, gamePlayerName);
-                    return;
-                }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite AddPendingVerification fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 // Ukloni ako već postoji
@@ -744,15 +608,6 @@ namespace TorchDiscordSync.Plugin.Services
             string gamePlayerName = null
         )
         {
-            if (_usingSQLite)
-            {
-                try
-                {
-                    _sqlite.MarkAsVerified(steamID, discordUsername, discordUserID, gamePlayerName);
-                    return;
-                }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite MarkAsVerified fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 // Get player name from pending verification if not provided
@@ -794,11 +649,6 @@ namespace TorchDiscordSync.Plugin.Services
 
         public PendingVerification GetPendingVerification(long steamID)
         {
-            if (_usingSQLite)
-            {
-                try { return _sqlite.GetPendingVerification(steamID); }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite GetPendingVerification fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 var pending = _verificationPlayersData.PendingVerifications.Find(p =>
@@ -819,11 +669,6 @@ namespace TorchDiscordSync.Plugin.Services
 
         public VerifiedPlayer GetVerifiedPlayer(long steamID)
         {
-            if (_usingSQLite)
-            {
-                try { return _sqlite.GetVerifiedPlayer(steamID); }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite GetVerifiedPlayer fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 return _verificationPlayersData.VerifiedPlayers.Find(v => v.SteamID == steamID);
@@ -832,11 +677,6 @@ namespace TorchDiscordSync.Plugin.Services
 
         public VerifiedPlayer GetVerifiedPlayerByDiscordID(ulong discordUserID)
         {
-            if (_usingSQLite)
-            {
-                try { return _sqlite.GetVerifiedPlayerByDiscordID(discordUserID); }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite GetVerifiedPlayerByDiscordID fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 return _verificationPlayersData.VerifiedPlayers.Find(v =>
@@ -847,11 +687,6 @@ namespace TorchDiscordSync.Plugin.Services
 
         public List<PendingVerification> GetAllPendingVerifications()
         {
-            if (_usingSQLite)
-            {
-                try { return _sqlite.GetAllPendingVerifications(); }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite GetAllPendingVerifications fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 return new List<PendingVerification>(_verificationPlayersData.PendingVerifications);
@@ -860,11 +695,6 @@ namespace TorchDiscordSync.Plugin.Services
 
         public List<VerifiedPlayer> GetAllVerifiedPlayers()
         {
-            if (_usingSQLite)
-            {
-                try { return _sqlite.GetAllVerifiedPlayers(); }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite GetAllVerifiedPlayers fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 return new List<VerifiedPlayer>(_verificationPlayersData.VerifiedPlayers);
@@ -873,11 +703,6 @@ namespace TorchDiscordSync.Plugin.Services
 
         public void DeletePendingVerification(long steamID)
         {
-            if (_usingSQLite)
-            {
-                try { _sqlite.DeletePendingVerification(steamID); return; }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite DeletePendingVerification fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 _verificationPlayersData.PendingVerifications.RemoveAll(p => p.SteamID == steamID);
@@ -888,11 +713,6 @@ namespace TorchDiscordSync.Plugin.Services
 
         public void DeleteVerifiedPlayer(long steamID)
         {
-            if (_usingSQLite)
-            {
-                try { _sqlite.DeleteVerifiedPlayer(steamID); return; }
-                catch (Exception ex) { LoggerUtil.LogError($"[DB] SQLite DeleteVerifiedPlayer fallback: {ex.Message}"); }
-            }
             lock (_lock)
             {
                 _verificationPlayersData.VerifiedPlayers.RemoveAll(v => v.SteamID == steamID);

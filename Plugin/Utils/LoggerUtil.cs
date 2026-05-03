@@ -2,6 +2,7 @@
 /// Utility class for logging messages to console and file
 using System;
 using System.IO;
+using System.Linq;
 using System.Text;
 using TorchDiscordSync.Plugin.Config;
 
@@ -13,6 +14,7 @@ namespace TorchDiscordSync.Plugin.Utils
     public static class LoggerUtil
     {
         private const string PREFIX = "[TorchDiscordSync.Plugin]";
+        private const int MaxRetainedLogFiles = 3;
         private static readonly object _lock = new object();
         private static bool _debugMode = false;
         private static string _currentLogFile = null;
@@ -55,25 +57,48 @@ namespace TorchDiscordSync.Plugin.Utils
                     MainConfig.GetInstancePath(),
                     MainConfig.PLUGIN_DIR_NAME,
                     "Logging");
-                Directory.CreateDirectory(logDir);
-
-                if (string.IsNullOrEmpty(_currentLogFile))
-                {
-                    var timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
-                    _currentLogFile = Path.Combine(logDir, $"{timestamp}_TDS_plugin.log");
-                }
-                return _currentLogFile;
+                return EnsureLogFilePath(logDir, "*_TDS_plugin.log", "_TDS_plugin.log");
             }
             catch
             {
                 // Fallback to temp directory
                 var tempLogDir = Path.Combine(Path.GetTempPath(), "TDSSaveData", "Logging");
-                if (!Directory.Exists(tempLogDir))
-                {
-                    Directory.CreateDirectory(tempLogDir);
-                }
+                return EnsureLogFilePath(tempLogDir, "*_TDS_plugin.log", "_TDS_plugin.log");
+            }
+        }
+
+        private static string EnsureLogFilePath(string logDir, string searchPattern, string suffix)
+        {
+            Directory.CreateDirectory(logDir);
+
+            if (string.IsNullOrEmpty(_currentLogFile))
+            {
                 var timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
-                return Path.Combine(tempLogDir, $"{timestamp}_TDS_plugin.log");
+                _currentLogFile = Path.Combine(logDir, $"{timestamp}{suffix}");
+                CleanupOldLogs(logDir, searchPattern, _currentLogFile);
+            }
+
+            return _currentLogFile;
+        }
+
+        private static void CleanupOldLogs(string logDir, string searchPattern, string currentLogFile)
+        {
+            try
+            {
+                var retainedExistingLogs = Math.Max(0, MaxRetainedLogFiles - 1);
+                var staleLogs = new DirectoryInfo(logDir)
+                    .GetFiles(searchPattern)
+                    .OrderByDescending(file => file.CreationTimeUtc)
+                    .ThenByDescending(file => file.Name, StringComparer.Ordinal)
+                    .Skip(retainedExistingLogs)
+                    .Where(file => !string.Equals(file.FullName, currentLogFile, StringComparison.OrdinalIgnoreCase));
+
+                foreach (var staleLog in staleLogs)
+                    staleLog.Delete();
+            }
+            catch
+            {
+                // Ignore cleanup errors to prevent crashes
             }
         }
 

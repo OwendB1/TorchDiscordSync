@@ -26,7 +26,7 @@ Unlike simple chat relays, **TorchDiscordSync** focuses on *deep game integratio
 6. [Player & Death Location](#player--death-location)
 7. [Server Health Monitoring](#server-health-monitoring)
 8. [Discord Admin Commands](#discord-admin-commands)
-9. [Data Storage (XML / SQLite)](#data-storage-xml--sqlite)
+9. [Data Storage (XML)](#data-storage-xml)
 10. [Event Logging](#event-logging)
 11. [In-Game Commands `/tds`](#in-game-commands-tds)
 12. [Configuration Overview](#configuration-overview)
@@ -52,8 +52,7 @@ Unlike simple chat relays, **TorchDiscordSync** focuses on *deep game integratio
 | Player Count Monitor | ✅ | Discord channel name reflects live count |
 | Discord Admin Commands | ✅ | Admin console from Discord (`!tds ...`) |
 | Data Storage – XML | ✅ | Default, zero-dependency storage |
-| Data Storage – SQLite | ✅ | Opt-in; requires external DLL (see below) |
-| Event Logging | ✅ | Structured log to DB + Discord staff channel |
+| Event Logging | ✅ | Structured log to XML + Discord staff channel |
 | Security & Sanitisation | ✅ | Sanitisation, content filtering, loop protection |
 
 ---
@@ -199,35 +198,15 @@ A dedicated Discord channel acts as a remote admin console. Post `!tds <subcomma
 
 ---
 
-## 💾 Data Storage (XML / SQLite)
-
-### XML (default)
+## 💾 Data Storage (XML)
 
 Zero external dependencies. Separate XML files per data type (factions, players, chat, events). Automatic serialisation via `DatabaseService`.
-
-### SQLite (opt-in)
-
-Enable with `config.DataStorage.UseSQLite = true` (automatically enabled when the DLLs are present).
-
-> **⚠️ Installation note:** `SQLite.Core.dll` is a mixed-mode assembly and must **not** be placed in the plugin folder. Place the DLLs in the Torch server root:
->
-> ```
-> TorchServer\
->   ├── System.Data.SQLite.dll       ← managed wrapper
->   └── x64\
->       └── SQLite.Interop.dll       ← native SQLite engine
-> ```
->
-> Download from: https://system.data.sqlite.org  
-> Package: `sqlite-netFx48-binary-bundle-x64-2013-1.0.118.0.zip`
-
-If the DLLs are absent, the plugin falls back to XML automatically without error.
 
 ---
 
 ## 📋 Event Logging
 
-Structured log entries are written to the local database (XML or SQLite) and, optionally, to a Discord staff log channel (`config.Discord.StaffLog` channel ID).
+Structured log entries are written to local XML data files and, optionally, to a Discord staff log channel (`config.Discord.StaffLog` channel ID).
 
 Logged event types include: `AdminCommand`, `CommandError`, server monitoring updates, and more.
 
@@ -283,15 +262,12 @@ Key settings:
 | `SimSpeed.Threshold` | Minimum acceptable sim speed (default `0.9`) |
 | `SimSpeed.AlertWindowSeconds` | Duration below threshold before alert fires (default `30`) |
 | `AdminSteamIDs` | List of Steam IDs with admin command access |
-| `DataStorage.UseSQLite` | Use SQLite instead of XML (default `true` when DLLs present) |
-
 ---
 
 ## 🗺️ Roadmap & Future Plans
 
 ### Raid Alerts (Offline Protection)
-*Dependency: SQLite (already implemented)*  
-Notify faction members via Discord DM/ping when their base takes damage while they are offline. High-frequency damage events require SQLite throughput to avoid impacting SimSpeed.
+Notify faction members via Discord DM/ping when their base takes damage while they are offline.
 
 ### Leaderboards & Statistics
 Weekly and monthly PvP rankings generated from accumulated kill data: K/D ratios, Most Active Faction, Top Ace Pilot, kill streak records.
@@ -309,7 +285,7 @@ Configurable recurring Discord embeds (rules, event notices, maintenance windows
 Detect sustained PvP between faction grids and post live "War Status" updates to Discord.
 
 ### Web Dashboard *(long-term)*
-A lightweight read-only web panel fed by SQLite: live stats, faction standings, kill history, verification status — no Discord required.
+A lightweight read-only web panel fed by exported XML data: live stats, faction standings, kill history, verification status — no Discord required.
 
 ### Multi-Server Support
 Route one Discord bot across multiple Torch instances with per-server channel configuration.

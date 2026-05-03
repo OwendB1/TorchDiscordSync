@@ -1,10 +1,12 @@
 using System;
 using System.IO;
+using System.Linq;
 
 namespace TorchDiscordSync.DiscordHost.Logging
 {
     internal static class HostLogger
     {
+        private const int MaxRetainedLogFiles = 3;
         private static readonly object SyncRoot = new object();
         private static string _logFilePath;
 
@@ -16,11 +18,7 @@ namespace TorchDiscordSync.DiscordHost.Logging
                     return;
 
                 var logDirectory = Path.Combine(pluginDirectory, "Logging");
-                Directory.CreateDirectory(logDirectory);
-                var timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
-                _logFilePath = Path.Combine(
-                    logDirectory,
-                    $"{timestamp}_TDS_discord_host.log");
+                _logFilePath = EnsureLogFilePath(logDirectory);
             }
             catch
             {
@@ -70,6 +68,36 @@ namespace TorchDiscordSync.DiscordHost.Logging
                 {
                     File.AppendAllText(_logFilePath, line + Environment.NewLine);
                 }
+            }
+            catch
+            {
+            }
+        }
+
+        private static string EnsureLogFilePath(string logDirectory)
+        {
+            Directory.CreateDirectory(logDirectory);
+
+            var timestamp = DateTime.Now.ToString("yyyy-MM-dd_HHmmss");
+            var currentLogFile = Path.Combine(logDirectory, $"{timestamp}_TDS_discord_host.log");
+            CleanupOldLogs(logDirectory, currentLogFile);
+            return currentLogFile;
+        }
+
+        private static void CleanupOldLogs(string logDirectory, string currentLogFile)
+        {
+            try
+            {
+                var retainedExistingLogs = Math.Max(0, MaxRetainedLogFiles - 1);
+                var staleLogs = new DirectoryInfo(logDirectory)
+                    .GetFiles("*_TDS_discord_host.log")
+                    .OrderByDescending(file => file.CreationTimeUtc)
+                    .ThenByDescending(file => file.Name, StringComparer.Ordinal)
+                    .Skip(retainedExistingLogs)
+                    .Where(file => !string.Equals(file.FullName, currentLogFile, StringComparison.OrdinalIgnoreCase));
+
+                foreach (var staleLog in staleLogs)
+                    staleLog.Delete();
             }
             catch
             {

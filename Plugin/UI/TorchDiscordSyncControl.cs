@@ -296,7 +296,6 @@ namespace TorchDiscordSync.Plugin.UI
             var section = CreateSection("Data Storage");
             var panel = GetSectionPanel(section);
 
-            AddCheckBoxRow(panel, "WorkingCopy.DataStorage.UseSQLite", "Use SQLite when available");
             AddCheckBoxRow(panel, "WorkingCopy.DataStorage.SaveEventLogs", "Persist event logs");
             AddCheckBoxRow(panel, "WorkingCopy.DataStorage.SaveDeathHistory", "Persist death history");
             AddCheckBoxRow(panel, "WorkingCopy.DataStorage.SaveGlobalChat", "Persist global chat");

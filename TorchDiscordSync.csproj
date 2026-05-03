@@ -53,23 +53,6 @@
   <!-- NuGet Package References -->
   <ItemGroup>
     <PackageReference Include="NLog" Version="4.7.15" />
-    <!-- SQLite packages for primary database storage (XML is fallback).
-         IMPORTANT: Private=False means SQLite DLLs are NOT copied to the plugin output folder.
-         Torch's PluginManager would crash on mixed-mode SQLite.Core.dll otherwise.
-         To enable SQLite, manually place these DLLs in your Torch server ROOT directory:
-           - System.Data.SQLite.dll  (or System.Data.SQLite.Core.dll)
-           - x64\SQLite.Interop.dll
-         If DLLs are not present, the plugin automatically falls back to XML storage. -->
-    <!-- <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118"/> -->
-    <!-- <PackageReference Include="System.Data.SQLite" Version="1.0.118" /> -->
-    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118">
-      <Private>False</Private>
-      <ExcludeAssets>runtime;native</ExcludeAssets>
-    </PackageReference>
-    <!-- <PackageReference Include="System.Data.SQLite.Core" Version="1.0.118"> -->
-    <!-- <Private>False</Private> -->
-    <!-- <ExcludeAssets>runtime;native</ExcludeAssets> -->
-    <!-- </PackageReference> -->
   </ItemGroup>
 
   <!-- Torch and Space Engineers Assembly References -->
@@ -130,13 +113,6 @@
       SourceFiles="@(DiscordHostPublishArtifacts)"
       DestinationFolder="$(OutputPath)"
       SkipUnchangedFiles="true" />
-
-    <Delete Files="$(OutputPath)System.Data.SQLite.dll" />
-    <Delete Files="$(OutputPath)System.Data.SQLite.Core.dll" />
-    <Delete Files="$(OutputPath)x64\SQLite.Interop.dll" />
-    <Delete Files="$(OutputPath)x86\SQLite.Interop.dll" />
-    <RemoveDir Directories="$(OutputPath)x64" />
-    <RemoveDir Directories="$(OutputPath)x86" />
   </Target>
 
   <Target Name="PackagePlugin" AfterTargets="BuildDiscordHost">

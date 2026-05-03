@@ -685,14 +685,6 @@ namespace TorchDiscordSync.Plugin.Config
     public class DataStorageConfig
     {
         /// <summary>
-        /// Use SQLite as primary database instead of XML.
-        /// XML files are kept as fallback if SQLite fails to initialize or encounters errors.
-        /// Default: true (SQLite is used when available)
-        /// </summary>
-        [XmlElement]
-        public bool UseSQLite { get; set; }
-
-        /// <summary>
         /// Save event logs to EventData.xml
         /// Default: true (events are logged)
         /// </summary>
@@ -732,7 +724,6 @@ namespace TorchDiscordSync.Plugin.Config
         /// </summary>
         public DataStorageConfig()
         {
-            UseSQLite = true;
             SaveEventLogs = true;
             SaveDeathHistory = true;
             SaveGlobalChat = false;
