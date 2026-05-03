@@ -34,7 +34,7 @@ namespace TorchDiscordSync.Plugin.Config
                 "{victim} pressed the big red button... on themselves",
                 "{victim} found a permanent solution to their problems",
                 "{victim} decided to take a one-way trip",
-                "{victim} chose not to respawn",
+                "{victim} chose to become part of the scenery",
                 "{victim} became one with the abyss",
                 "{victim} gave up on life",
                 "{victim} was too lazy to respawn",

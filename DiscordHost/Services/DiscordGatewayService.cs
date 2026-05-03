@@ -430,26 +430,20 @@ namespace TorchDiscordSync.DiscordHost.Services
                     _statusSetOnline = true;
                 }
 
-                await _client.SetGameAsync(
-                    request.StatusText,
-                    null,
-                    ActivityType.Watching).ConfigureAwait(false);
+                await _client.SetActivityAsync(new CustomStatusGame(request.StatusText)).ConfigureAwait(false);
                 _lastPresenceText = request.StatusText;
                 return true;
             }
             catch (Exception ex)
             {
-                HostLogger.Error("UpdatePresenceAsync failed: " + ex.Message);
+                HostLogger.Error("SetActivityAsync failed: " + ex.Message);
                 return false;
             }
         }
 
         private async Task<bool> ConnectCoreAsync()
         {
-            if (_isConnected || _config == null)
-                return true;
-
-            const GatewayIntents messageContentIntent = (GatewayIntents)32768;
+            if (_isConnected || _config == null) return true;
 
             var config = new DiscordSocketConfig
             {
@@ -457,8 +451,7 @@ namespace TorchDiscordSync.DiscordHost.Services
                     GatewayIntents.Guilds
                     | GatewayIntents.GuildMessages
                     | GatewayIntents.GuildMembers
-                    | GatewayIntents.GuildPresences
-                    | messageContentIntent,
+                    | GatewayIntents.MessageContent,
                 AlwaysDownloadUsers = false,
             };
 

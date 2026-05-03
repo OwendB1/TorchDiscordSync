@@ -304,10 +304,7 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                return _botService != null
-                    ? await _botService.UpdateChannelNameAsync(channelId, newName)
-                        .ConfigureAwait(false)
-                    : false;
+                return _botService != null && await _botService.UpdateChannelNameAsync(channelId, newName).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -320,9 +317,7 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                return _botService != null
-                    ? await _botService.UpdatePresenceAsync(statusText).ConfigureAwait(false)
-                    : false;
+                return _botService != null && await _botService.UpdatePresenceAsync(statusText).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

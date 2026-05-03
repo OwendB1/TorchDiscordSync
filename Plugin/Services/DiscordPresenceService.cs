@@ -14,6 +14,7 @@ namespace TorchDiscordSync.Plugin.Services
         private const int DefaultIntervalSeconds = 1;
         private const int DefaultMaxPlayers = 20;
         private const string OfflinePresenceText = "Server offline";
+        private const int PlayerCountFollowUpDelayMs = 750;
 
         private readonly MainConfig _config;
         private readonly DiscordService _discord;
@@ -21,6 +22,7 @@ namespace TorchDiscordSync.Plugin.Services
 
         private int _updateInProgress;
         private int _pendingUpdate;
+        private int _followUpUpdateScheduled;
         private bool _isDisposed;
         private bool _isStarted;
         private bool _lastReadyState;
@@ -80,6 +82,12 @@ namespace TorchDiscordSync.Plugin.Services
             QueuePresenceUpdate();
         }
 
+        public void RequestPlayerCountUpdate()
+        {
+            QueuePresenceUpdate();
+            ScheduleFollowUpUpdate();
+        }
+
         public void Dispose()
         {
             if (_isDisposed)
@@ -129,6 +137,31 @@ namespace TorchDiscordSync.Plugin.Services
                         QueuePresenceUpdate();
                     }
                 }
+            });
+        }
+
+        private void ScheduleFollowUpUpdate()
+        {
+            if (_isDisposed || !_isStarted)
+                return;
+
+            if (Interlocked.CompareExchange(ref _followUpUpdateScheduled, 1, 0) == 1)
+                return;
+
+            Task.Run(async delegate
+            {
+                try
+                {
+                    await Task.Delay(PlayerCountFollowUpDelayMs).ConfigureAwait(false);
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _followUpUpdateScheduled, 0);
+                }
+
+                // Join/leave chat signals can arrive slightly before MySession reports
+                // the updated player count, so do one short follow-up refresh.
+                QueuePresenceUpdate();
             });
         }
 

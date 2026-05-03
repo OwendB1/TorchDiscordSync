@@ -51,7 +51,7 @@ namespace TorchDiscordSync.DiscordHost.Logging
         private static void Write(string level, string message)
         {
             var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-            var line = $"[DiscordHost] [{timestamp}] [{level}] {message}";
+            var line = $"[DISCORD_HOST] [{timestamp}] [{level}] {message}";
 
             try
             {

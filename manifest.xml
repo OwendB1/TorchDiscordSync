@@ -2,7 +2,7 @@
 <PluginManifest>
   <Name>TDS-Linux</Name>
   <Guid>07ce2bbd-f606-418d-aff1-ea95bfc5795d</Guid>
-  <Version>0.0.8</Version>
+  <Version>0.0.11</Version>
   <Description>
     Advanced Space Engineers Torch plugin: Syncs player factions to Discord with death logging,
     chat synchronization, server monitoring (SimSpeed), and security features. XML-based persistence

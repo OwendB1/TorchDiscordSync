@@ -692,13 +692,13 @@ namespace TorchDiscordSync.Plugin.Services
         private static void OnHostOutputDataReceived(object sender, DataReceivedEventArgs e)
         {
             if (!string.IsNullOrWhiteSpace(e.Data))
-                LoggerUtil.LogInfo("[DISCORD_HOST] " + e.Data);
+                LoggerUtil.LogInfo(e.Data);
         }
 
         private static void OnHostErrorDataReceived(object sender, DataReceivedEventArgs e)
         {
             if (!string.IsNullOrWhiteSpace(e.Data))
-                LoggerUtil.LogError("[DISCORD_HOST] " + e.Data);
+                LoggerUtil.LogError(e.Data);
         }
 
         private bool TryCreateHostProcessStartInfo(out ProcessStartInfo startInfo)

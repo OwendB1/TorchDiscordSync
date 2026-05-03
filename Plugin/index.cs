@@ -408,7 +408,7 @@ namespace TorchDiscordSync
 
         private void OnOnlinePlayersChanged()
         {
-            _discordPresenceService?.RequestUpdate();
+            _discordPresenceService?.RequestPlayerCountUpdate();
         }
 
         private bool ApplyConfigurationInternal(
