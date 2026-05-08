@@ -398,7 +398,7 @@ namespace TorchDiscordSync.Plugin.Services
             return response.Success;
         }
 
-        public async Task<bool> UpdatePresenceAsync(string statusText)
+        public async Task<bool> UpdatePresenceAsync(string statusText, bool forceUpdate = false)
         {
             if (!await EnsureStartedAsync().ConfigureAwait(false))
                 return false;
@@ -408,6 +408,7 @@ namespace TorchDiscordSync.Plugin.Services
                     new DiscordUpdatePresenceRequest
                     {
                         StatusText = statusText,
+                        ForceUpdate = forceUpdate,
                     })
                 .ConfigureAwait(false);
 

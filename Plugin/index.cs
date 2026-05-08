@@ -66,6 +66,7 @@ namespace TorchDiscordSync
         private ITorchSession   _currentSession;
         private TorchSessionState _sessionState            = TorchSessionState.Unloaded;
         private bool            _isInitialized              = false;
+        private bool            _isDisposing                = false;
         private bool            _serverStartupLogged        = false;
         private bool            _playerTrackingInitialized  = false;
         private bool            _damageTrackingInitialized  = false;
@@ -106,7 +107,7 @@ namespace TorchDiscordSync
                 _discordBot = new DiscordBotService(CreateDiscordRuntimeConfig());
                 _discordWrapper = new DiscordService(_discordBot);
                 _discordPresenceService = new DiscordPresenceService(_config, _discordWrapper, _gameThread);
-                Task.Run(delegate { return ConnectBotAsync(); });
+                _ = ConnectBotAsync();
 
                 // ---- event logging ----
                 _eventLog = new EventLoggingService(_db, _discordWrapper, _config, _gameThread);
@@ -296,6 +297,8 @@ namespace TorchDiscordSync
 
         public override void Dispose()
         {
+            _isDisposing = true;
+
             // Clean up death message handler
             _deathMessageHandler?.Cleanup();
 
@@ -920,11 +923,23 @@ namespace TorchDiscordSync
             if (_discordWrapper == null)
                 return;
 
-            if (await _discordWrapper.StartAsync().ConfigureAwait(false))
+            const int maxAttempts = 5;
+            for (var attempt = 1; attempt <= maxAttempts && !_isDisposing; attempt++)
             {
-                LoggerUtil.LogInfo(
-                    "Discord host launched and IPC initialized; waiting for Ready state"
+                if (await _discordWrapper.StartAsync().ConfigureAwait(false))
+                {
+                    LoggerUtil.LogInfo(
+                        "Discord host launched and IPC initialized; waiting for Ready state"
+                    );
+                    return;
+                }
+
+                LoggerUtil.LogWarning(
+                    "[DISCORD_IPC] Startup attempt " + attempt + "/" + maxAttempts + " failed."
                 );
+
+                if (attempt < maxAttempts && !_isDisposing)
+                    await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
             }
         }
 

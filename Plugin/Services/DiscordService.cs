@@ -338,11 +338,12 @@ namespace TorchDiscordSync.Plugin.Services
             }
         }
 
-        public async Task<bool> UpdatePresenceAsync(string statusText)
+        public async Task<bool> UpdatePresenceAsync(string statusText, bool forceUpdate = false)
         {
             try
             {
-                return _botService != null && await _botService.UpdatePresenceAsync(statusText).ConfigureAwait(false);
+                return _botService != null
+                    && await _botService.UpdatePresenceAsync(statusText, forceUpdate).ConfigureAwait(false);
             }
             catch (Exception ex)
             {

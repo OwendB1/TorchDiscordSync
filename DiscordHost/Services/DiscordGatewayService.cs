@@ -421,7 +421,8 @@ namespace TorchDiscordSync.DiscordHost.Services
                 if (!EnsureReady() || request == null || string.IsNullOrWhiteSpace(request.StatusText))
                     return false;
 
-                if (string.Equals(request.StatusText, _lastPresenceText, StringComparison.Ordinal))
+                if (!request.ForceUpdate
+                    && string.Equals(request.StatusText, _lastPresenceText, StringComparison.Ordinal))
                     return true;
 
                 if (!_statusSetOnline)

@@ -237,6 +237,9 @@ namespace TorchDiscordSync.Shared.Ipc
     {
         [DataMember(Order = 1)]
         public string StatusText { get; set; }
+
+        [DataMember(Order = 2)]
+        public bool ForceUpdate { get; set; }
     }
 
     [DataContract]

@@ -142,10 +142,6 @@ namespace TorchDiscordSync.Plugin.UI
             AddTextRow(panel, "Admin alert channel ID", "WorkingCopy.Discord.AdminAlertChannelId");
             AddTextRow(panel, "Admin bot channel ID", "WorkingCopy.Discord.AdminBotChannelId");
             AddTextRow(panel, "Faction sync interval (seconds)", "WorkingCopy.Discord.SyncIntervalSeconds");
-            AddTextRow(
-                panel,
-                "Presence update interval (seconds)",
-                "WorkingCopy.Discord.PresenceUpdateIntervalSeconds");
 
             return section;
         }

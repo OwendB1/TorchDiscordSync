@@ -233,8 +233,6 @@ namespace TorchDiscordSync.Plugin.Config
 
             if (Discord.SyncIntervalSeconds <= 0)
                 Discord.SyncIntervalSeconds = 30;
-            if (Discord.PresenceUpdateIntervalSeconds <= 0)
-                Discord.PresenceUpdateIntervalSeconds = 1;
             if (CleanupIntervalSeconds <= 0)
                 CleanupIntervalSeconds = 30;
             if (DamageHistoryMaxSeconds <= 0)
@@ -407,9 +405,6 @@ namespace TorchDiscordSync.Plugin.Config
         [XmlElement]
         public ulong AdminBotChannelId { get; set; }
 
-        [XmlElement]
-        public int PresenceUpdateIntervalSeconds { get; set; }
-
         public DiscordConfig()
         {
             SyncIntervalSeconds = 30;
@@ -423,7 +418,6 @@ namespace TorchDiscordSync.Plugin.Config
             FactionCategoryId = 0;
             AdminAlertChannelId = 0;
             AdminBotChannelId   = 0;
-            PresenceUpdateIntervalSeconds = 1;
         }
     }
 
