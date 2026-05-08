@@ -205,13 +205,26 @@ namespace TorchDiscordSync.Plugin.Services
             }
         }
 
-        public DiscordRoleInfo GetExistingRole(ulong roleId)
+        public async Task<DiscordRoleInfo> GetExistingRoleAsync(ulong roleId)
         {
             try
             {
                 return _botService != null
-                    ? _botService.GetRoleInfoAsync(roleId).GetAwaiter().GetResult()
+                    ? await _botService.GetRoleInfoAsync(roleId).ConfigureAwait(false)
                     : null;
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogWarning("[DISCORD] Error checking role: " + ex.Message);
+                return null;
+            }
+        }
+
+        public DiscordRoleInfo GetExistingRole(ulong roleId)
+        {
+            try
+            {
+                return GetExistingRoleAsync(roleId).GetAwaiter().GetResult();
             }
             catch (Exception ex)
             {
@@ -249,15 +262,27 @@ namespace TorchDiscordSync.Plugin.Services
             }
         }
 
-        public DiscordChannelInfo GetExistingVoiceChannel(ulong channelId)
+        public async Task<DiscordChannelInfo> GetExistingVoiceChannelAsync(ulong channelId)
         {
             try
             {
                 return _botService != null
-                    ? _botService.GetChannelInfoAsync(channelId, DiscordChannelKind.Voice)
-                        .GetAwaiter()
-                        .GetResult()
+                    ? await _botService.GetChannelInfoAsync(channelId, DiscordChannelKind.Voice)
+                        .ConfigureAwait(false)
                     : null;
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogWarning("[DISCORD] Error checking voice channel: " + ex.Message);
+                return null;
+            }
+        }
+
+        public DiscordChannelInfo GetExistingVoiceChannel(ulong channelId)
+        {
+            try
+            {
+                return GetExistingVoiceChannelAsync(channelId).GetAwaiter().GetResult();
             }
             catch (Exception ex)
             {
@@ -326,12 +351,12 @@ namespace TorchDiscordSync.Plugin.Services
             }
         }
 
-        public ulong FindRoleByName(string name)
+        public async Task<ulong> FindRoleByNameAsync(string name)
         {
             try
             {
                 return _botService != null
-                    ? _botService.FindRoleByNameAsync(name).GetAwaiter().GetResult()
+                    ? await _botService.FindRoleByNameAsync(name).ConfigureAwait(false)
                     : 0;
             }
             catch (Exception ex)
@@ -341,14 +366,26 @@ namespace TorchDiscordSync.Plugin.Services
             }
         }
 
-        public ulong FindTextChannelByName(string name)
+        public ulong FindRoleByName(string name)
+        {
+            try
+            {
+                return FindRoleByNameAsync(name).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogDebug("[DISCORD] FindRoleByName error: " + ex.Message);
+                return 0;
+            }
+        }
+
+        public async Task<ulong> FindTextChannelByNameAsync(string name)
         {
             try
             {
                 return _botService != null
-                    ? _botService.FindChannelByNameAsync(name, DiscordChannelKind.Text)
-                        .GetAwaiter()
-                        .GetResult()
+                    ? await _botService.FindChannelByNameAsync(name, DiscordChannelKind.Text)
+                        .ConfigureAwait(false)
                     : 0;
             }
             catch (Exception ex)
@@ -358,15 +395,40 @@ namespace TorchDiscordSync.Plugin.Services
             }
         }
 
-        public ulong FindVoiceChannelByName(string name)
+        public ulong FindTextChannelByName(string name)
+        {
+            try
+            {
+                return FindTextChannelByNameAsync(name).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogDebug("[DISCORD] FindTextChannelByName error: " + ex.Message);
+                return 0;
+            }
+        }
+
+        public async Task<ulong> FindVoiceChannelByNameAsync(string name)
         {
             try
             {
                 return _botService != null
-                    ? _botService.FindChannelByNameAsync(name, DiscordChannelKind.Voice)
-                        .GetAwaiter()
-                        .GetResult()
+                    ? await _botService.FindChannelByNameAsync(name, DiscordChannelKind.Voice)
+                        .ConfigureAwait(false)
                     : 0;
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogDebug("[DISCORD] FindVoiceChannelByName error: " + ex.Message);
+                return 0;
+            }
+        }
+
+        public ulong FindVoiceChannelByName(string name)
+        {
+            try
+            {
+                return FindVoiceChannelByNameAsync(name).GetAwaiter().GetResult();
             }
             catch (Exception ex)
             {

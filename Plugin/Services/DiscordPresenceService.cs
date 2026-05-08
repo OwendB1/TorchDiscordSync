@@ -18,6 +18,7 @@ namespace TorchDiscordSync.Plugin.Services
 
         private readonly MainConfig _config;
         private readonly DiscordService _discord;
+        private readonly GameThreadInvoker _gameThread;
         private readonly System.Timers.Timer _presenceTimer;
 
         private int _updateInProgress;
@@ -29,10 +30,21 @@ namespace TorchDiscordSync.Plugin.Services
         private string _lastPresenceText;
         private DateTime _lastFailureLogTime = DateTime.MinValue;
 
-        public DiscordPresenceService(MainConfig config, DiscordService discord)
+        private sealed class PresenceSnapshot
+        {
+            public float SimSpeed { get; set; }
+            public int PlayerCount { get; set; }
+            public int MaxPlayers { get; set; }
+        }
+
+        public DiscordPresenceService(
+            MainConfig config,
+            DiscordService discord,
+            GameThreadInvoker gameThread)
         {
             _config = config;
             _discord = discord;
+            _gameThread = gameThread;
 
             var intervalSeconds = GetIntervalSeconds();
             _presenceTimer = new System.Timers.Timer(intervalSeconds * 1000.0);
@@ -67,14 +79,17 @@ namespace TorchDiscordSync.Plugin.Services
             if (!updateOfflinePresence || _isDisposed)
                 return;
 
-            try
+            _ = Task.Run(async delegate
             {
-                UpdatePresenceAsync(OfflinePresenceText, true).GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                LoggerUtil.LogDebug("[PRESENCE] Offline presence update failed: " + ex.Message);
-            }
+                try
+                {
+                    await UpdatePresenceAsync(OfflinePresenceText, true).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    LoggerUtil.LogDebug("[PRESENCE] Offline presence update failed: " + ex.Message);
+                }
+            });
         }
 
         public void RequestUpdate()
@@ -122,7 +137,8 @@ namespace TorchDiscordSync.Plugin.Services
                         && _isStarted
                         && Interlocked.Exchange(ref _pendingUpdate, 0) == 1)
                     {
-                        await UpdatePresenceAsync(BuildPresenceText(), false).ConfigureAwait(false);
+                        var presenceText = await BuildPresenceTextAsync().ConfigureAwait(false);
+                        await UpdatePresenceAsync(presenceText, false).ConfigureAwait(false);
                     }
                 }
                 finally
@@ -200,18 +216,24 @@ namespace TorchDiscordSync.Plugin.Services
             LoggerUtil.LogWarning("[PRESENCE] Failed to update Discord presence");
         }
 
-        private string BuildPresenceText()
+        private Task<string> BuildPresenceTextAsync()
         {
-            var simSpeed = PluginUtils.GetCurrentSimSpeed();
-            var playerCount = GetOnlinePlayerCount();
-            var maxPlayers = GetMaxPlayerCount();
+            if (_gameThread == null)
+                return Task.FromResult(BuildPresenceTextCore());
+
+            return _gameThread.RunAsync(BuildPresenceTextCore, nameof(DiscordPresenceService));
+        }
+
+        private string BuildPresenceTextCore()
+        {
+            var snapshot = CapturePresenceSnapshot();
 
             return string.Format(
                 CultureInfo.InvariantCulture,
                 "SimSpeed {0:0.00} | {1}/{2} players",
-                simSpeed,
-                playerCount,
-                maxPlayers
+                snapshot.SimSpeed,
+                snapshot.PlayerCount,
+                snapshot.MaxPlayers
             );
         }
 
@@ -221,30 +243,34 @@ namespace TorchDiscordSync.Plugin.Services
             return intervalSeconds > 0 ? intervalSeconds : DefaultIntervalSeconds;
         }
 
-        private static int GetOnlinePlayerCount()
+        private static PresenceSnapshot CapturePresenceSnapshot()
         {
+            var snapshot = new PresenceSnapshot
+            {
+                SimSpeed = PluginUtils.GetCurrentSimSpeed(),
+                PlayerCount = 0,
+                MaxPlayers = DefaultMaxPlayers,
+            };
+
             try
             {
-                return MySession.Static?.Players?.GetOnlinePlayerCount() ?? 0;
+                snapshot.PlayerCount = MySession.Static?.Players?.GetOnlinePlayerCount() ?? 0;
             }
             catch (Exception ex)
             {
                 LoggerUtil.LogError("[PRESENCE] Error getting online player count: " + ex.Message);
-                return 0;
             }
-        }
 
-        private static int GetMaxPlayerCount()
-        {
             try
             {
-                return MySession.Static?.Settings?.MaxPlayers ?? DefaultMaxPlayers;
+                snapshot.MaxPlayers = MySession.Static?.Settings?.MaxPlayers ?? DefaultMaxPlayers;
             }
             catch (Exception ex)
             {
                 LoggerUtil.LogError("[PRESENCE] Error getting max player count: " + ex.Message);
-                return DefaultMaxPlayers;
             }
+
+            return snapshot;
         }
     }
 }

@@ -1,6 +1,7 @@
 // Plugin/Services/EventLoggingService.cs
 using System;
 using System.Threading.Tasks;
+using Sandbox.Game;
 using TorchDiscordSync.Plugin.Config;
 using TorchDiscordSync.Plugin.Models;
 using TorchDiscordSync.Plugin.Utils;
@@ -12,12 +13,18 @@ namespace TorchDiscordSync.Plugin.Services
         private readonly DatabaseService _db;
         private readonly DiscordService _discord;
         private readonly MainConfig _config;
+        private readonly GameThreadInvoker _gameThread;
 
-        public EventLoggingService(DatabaseService db, DiscordService discord, MainConfig config)
+        public EventLoggingService(
+            DatabaseService db,
+            DiscordService discord,
+            MainConfig config,
+            GameThreadInvoker gameThread)
         {
             _db = db;
             _discord = discord;
             _config = config;
+            _gameThread = gameThread;
         }
 
         public Task LogAsync(string eventType, string details)
@@ -208,23 +215,8 @@ namespace TorchDiscordSync.Plugin.Services
 
                 if (echoToGame)
                 {
-                    // SEND TO GAME CHAT FIRST (from configuration)
-                    try
-                    {
-                        // Remove Discord formatting for game chat
-                        var gameMessage = message.Replace(":sunny:", "").Trim();
-                        Sandbox.Game.MyVisualScriptLogicProvider.SendChatMessage(
-                            gameMessage,
-                            "Server",
-                            0,
-                            "Yellow"
-                        );
-                        LoggerUtil.LogInfo($"[PLAYER_JOIN] In-game message: {gameMessage}");
-                    }
-                    catch (Exception exGame)
-                    {
-                        LoggerUtil.LogError($"Failed to send join message to game: {exGame.Message}");
-                    }
+                    var gameMessage = message.Replace(":sunny:", "").Trim();
+                    SendGameChatMessage(gameMessage, "[PLAYER_JOIN]");
                 }
 
                 // THEN SEND TO DISCORD
@@ -260,23 +252,8 @@ namespace TorchDiscordSync.Plugin.Services
 
                 if (echoToGame)
                 {
-                    // SEND TO GAME CHAT FIRST (from configuration)
-                    try
-                    {
-                        // Remove Discord formatting for game chat
-                        var gameMessage = message.Replace(":sunny:", "").Trim();
-                        Sandbox.Game.MyVisualScriptLogicProvider.SendChatMessage(
-                            gameMessage,
-                            "Server",
-                            0,
-                            "Yellow"
-                        );
-                        LoggerUtil.LogInfo($"[PLAYER_LEAVE] In-game message: {gameMessage}");
-                    }
-                    catch (Exception exGame)
-                    {
-                        LoggerUtil.LogError($"Failed to send leave message to game: {exGame.Message}");
-                    }
+                    var gameMessage = message.Replace(":sunny:", "").Trim();
+                    SendGameChatMessage(gameMessage, "[PLAYER_LEAVE]");
                 }
 
                 // THEN SEND TO DISCORD
@@ -328,6 +305,33 @@ namespace TorchDiscordSync.Plugin.Services
             }
 
             return Task.FromResult(0);
+        }
+
+        private void SendGameChatMessage(string message, string context)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(message))
+                    return;
+
+                if (_gameThread != null)
+                {
+                    _ = _gameThread.RunAsync(() =>
+                    {
+                        MyVisualScriptLogicProvider.SendChatMessage(message, "Server", 0, "Yellow");
+                    }, nameof(EventLoggingService));
+                }
+                else
+                {
+                    MyVisualScriptLogicProvider.SendChatMessage(message, "Server", 0, "Yellow");
+                }
+
+                LoggerUtil.LogInfo($"{context} In-game message: {message}");
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogError($"{context} Failed to send message to game: {ex.Message}");
+            }
         }
     }
 }

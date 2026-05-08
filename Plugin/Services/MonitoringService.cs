@@ -13,6 +13,7 @@ namespace TorchDiscordSync.Plugin.Services
     {
         private readonly MainConfig _config;
         private readonly DiscordService _discord;
+        private readonly GameThreadInvoker _gameThread;
         private Timer _monitoringTimer;
         private bool _isDisposed = false;
         private int _updateInProgress;
@@ -27,10 +28,18 @@ namespace TorchDiscordSync.Plugin.Services
         // NEW: Do not send SimSpeed alerts on very first check (server still starting)
         private bool _simSpeedAlertsReady = false;
 
-        public MonitoringService(MainConfig config, DiscordService discord)
+        private sealed class MonitoringSnapshot
+        {
+            public float SimSpeed { get; set; }
+            public int PlayerCount { get; set; }
+            public int MaxPlayers { get; set; }
+        }
+
+        public MonitoringService(MainConfig config, DiscordService discord, GameThreadInvoker gameThread)
         {
             _config = config;
             _discord = discord;
+            _gameThread = gameThread;
 
             LoggerUtil.LogDebug("[MONITORING] MonitoringService instance created");
         }
@@ -114,10 +123,11 @@ namespace TorchDiscordSync.Plugin.Services
             {
                 LoggerUtil.LogDebug("[MONITORING_UPDATE] Starting channel name update...");
 
-                var currentSimSpeed = PluginUtils.GetCurrentSimSpeed();
+                var snapshot = await CaptureSnapshotAsync().ConfigureAwait(false);
+                var currentSimSpeed = snapshot.SimSpeed;
                 LoggerUtil.LogDebug($"[MONITORING_UPDATE] Current SimSpeed: {currentSimSpeed:F2}");
 
-                var currentPlayerCount = GetOnlinePlayerCount();
+                var currentPlayerCount = snapshot.PlayerCount;
                 LoggerUtil.LogDebug(
                     $"[MONITORING_UPDATE] Current player count: {currentPlayerCount}"
                 );
@@ -145,7 +155,7 @@ namespace TorchDiscordSync.Plugin.Services
                     LoggerUtil.LogDebug(
                         $"[MONITORING_UPDATE] Player count changed: {_lastPlayerCount} → {currentPlayerCount}"
                     );
-                    await UpdatePlayerCountChannelAsync(currentPlayerCount).ConfigureAwait(false);
+                    await UpdatePlayerCountChannelAsync(currentPlayerCount, snapshot.MaxPlayers).ConfigureAwait(false);
                     _lastPlayerCount = currentPlayerCount;
                 }
                 else
@@ -264,7 +274,7 @@ namespace TorchDiscordSync.Plugin.Services
             }
         }
 
-        private async Task UpdatePlayerCountChannelAsync(int playerCount)
+        private async Task UpdatePlayerCountChannelAsync(int playerCount, int maxPlayers)
         {
             try
             {
@@ -286,8 +296,6 @@ namespace TorchDiscordSync.Plugin.Services
                     LoggerUtil.LogError("[MONITORING_PLAYERS] Discord bot not ready");
                     return;
                 }
-
-                var maxPlayers = GetMaxPlayerCount();
 
                 var newName = _config
                     .Monitoring.PlayerCountChannelNameFormat.Replace("{p}", playerCount.ToString())
@@ -356,52 +364,49 @@ namespace TorchDiscordSync.Plugin.Services
             }
         }
 
-        private int GetOnlinePlayerCount()
+        private Task<MonitoringSnapshot> CaptureSnapshotAsync()
         {
+            if (_gameThread == null)
+                return Task.FromResult(CaptureSnapshotCore());
+
+            return _gameThread.RunAsync(CaptureSnapshotCore, nameof(MonitoringService));
+        }
+
+        private MonitoringSnapshot CaptureSnapshotCore()
+        {
+            var snapshot = new MonitoringSnapshot
+            {
+                SimSpeed = PluginUtils.GetCurrentSimSpeed(),
+                PlayerCount = 0,
+                MaxPlayers = 20,
+            };
+
             try
             {
                 LoggerUtil.LogDebug("[MONITORING_COUNT] Getting online player count...");
-
-                if (MySession.Static == null || MySession.Static.Players == null)
-                {
-                    LoggerUtil.LogWarning("[MONITORING_COUNT] Session or Players is null");
-                    return 0;
-                }
-
-                var count = MySession.Static.Players.GetOnlinePlayerCount();
-                LoggerUtil.LogDebug($"[MONITORING_COUNT] Found {count} online players");
-                return count;
+                snapshot.PlayerCount = MySession.Static?.Players?.GetOnlinePlayerCount() ?? 0;
+                LoggerUtil.LogDebug($"[MONITORING_COUNT] Found {snapshot.PlayerCount} online players");
             }
             catch (Exception ex)
             {
                 LoggerUtil.LogError($"[MONITORING_COUNT] Error getting player count: {ex.Message}");
-                return 0;
             }
-        }
 
-        private int GetMaxPlayerCount()
-        {
             try
             {
-                var maxPlayers = 20;
-
-                if (MySession.Static != null && MySession.Static.Settings != null)
-                {
-                    maxPlayers = MySession.Static.Settings.MaxPlayers;
-                    LoggerUtil.LogDebug(
-                        $"[MONITORING_MAX] Max players from settings: {maxPlayers}"
-                    );
-                }
-
-                return maxPlayers;
+                snapshot.MaxPlayers = MySession.Static?.Settings?.MaxPlayers ?? 20;
+                LoggerUtil.LogDebug(
+                    $"[MONITORING_MAX] Max players from settings: {snapshot.MaxPlayers}"
+                );
             }
             catch (Exception ex)
             {
                 LoggerUtil.LogError(
                     $"[MONITORING_MAX] Error getting max player count: {ex.Message}"
                 );
-                return 20;
             }
+
+            return snapshot;
         }
 
         public void Stop()

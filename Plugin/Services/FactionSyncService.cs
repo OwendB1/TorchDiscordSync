@@ -22,6 +22,7 @@ namespace TorchDiscordSync.Plugin.Services
         private readonly DatabaseService _db;
         private readonly DiscordService _discord;
         private readonly MainConfig _config;
+        private readonly GameThreadInvoker _gameThread;
 
         // ── Post-undo cooldown ──────────────────────────────────────────
         // After an undo operation Discord.Net's in-memory cache still holds
@@ -45,11 +46,16 @@ namespace TorchDiscordSync.Plugin.Services
             return false;
         }
 
-        public FactionSyncService(DatabaseService db, DiscordService discord, MainConfig config)
+        public FactionSyncService(
+            DatabaseService db,
+            DiscordService discord,
+            MainConfig config,
+            GameThreadInvoker gameThread)
         {
             _db = db;
             _discord = discord;
             _config = config;
+            _gameThread = gameThread;
 
             LoggerUtil.LogDebug("[FACTION_SYNC] FactionSyncService initialized");
         }
@@ -111,7 +117,20 @@ namespace TorchDiscordSync.Plugin.Services
         /// Loads all player-created factions from the current game session.
         /// Filters out NPC factions and factions with non-standard tags.
         /// </summary>
+        public Task<List<FactionModel>> LoadFactionsFromGameAsync()
+        {
+            if (_gameThread == null)
+                return Task.FromResult(LoadFactionsFromGameCore());
+
+            return _gameThread.RunAsync(LoadFactionsFromGameCore, nameof(FactionSyncService));
+        }
+
         public List<FactionModel> LoadFactionsFromGame()
+        {
+            return LoadFactionsFromGameCore();
+        }
+
+        private List<FactionModel> LoadFactionsFromGameCore()
         {
             var factionModels = new List<FactionModel>();
 
@@ -245,7 +264,7 @@ namespace TorchDiscordSync.Plugin.Services
                 // If no factions provided, load from game
                 if (factions == null || factions.Count == 0)
                 {
-                    factions = LoadFactionsFromGame();
+                    factions = await LoadFactionsFromGameAsync().ConfigureAwait(false);
                 }
 
                 if (factions == null || factions.Count == 0)
@@ -300,7 +319,8 @@ namespace TorchDiscordSync.Plugin.Services
                     // ============================================================
                     if (dbFaction.DiscordRoleID > 0)
                     {
-                        var existingRole = _discord.GetExistingRole(dbFaction.DiscordRoleID);
+                        var existingRole = await _discord.GetExistingRoleAsync(dbFaction.DiscordRoleID)
+                            .ConfigureAwait(false);
                         if (existingRole != null)
                         {
                             LoggerUtil.LogDebug(
@@ -329,7 +349,8 @@ namespace TorchDiscordSync.Plugin.Services
                     // ============================================================
                     if (dbFaction.DiscordChannelID > 0)
                     {
-                        var existingChannel = _discord.GetExistingChannel(dbFaction.DiscordChannelID);
+                        var existingChannel = await _discord.GetExistingChannelAsync(dbFaction.DiscordChannelID)
+                            .ConfigureAwait(false);
                         if (existingChannel != null)
                         {
                             LoggerUtil.LogDebug(
@@ -360,7 +381,8 @@ namespace TorchDiscordSync.Plugin.Services
                     {
                         // FIX: Before creating, check if role with same tag already exists
                         // on Discord (prevents duplicates when XML db is missing/empty).
-                        var existingRoleId = _discord.FindRoleByName(dbFaction.Tag);
+                        var existingRoleId = await _discord.FindRoleByNameAsync(dbFaction.Tag)
+                            .ConfigureAwait(false);
                         if (existingRoleId > 0)
                         {
                             LoggerUtil.LogInfo(
@@ -408,7 +430,8 @@ namespace TorchDiscordSync.Plugin.Services
                                 .ToLower();
 
                         // FIX: Check if text channel with same name already exists on Discord
-                        var existingChannelId = _discord.FindTextChannelByName(channelName);
+                        var existingChannelId = await _discord.FindTextChannelByNameAsync(channelName)
+                            .ConfigureAwait(false);
                         if (existingChannelId > 0)
                         {
                             LoggerUtil.LogInfo(
@@ -470,7 +493,8 @@ namespace TorchDiscordSync.Plugin.Services
                             // ============================================================
                             if (dbFaction.DiscordVoiceChannelID > 0)
                             {
-                                var existingVoice = _discord.GetExistingVoiceChannel(dbFaction.DiscordVoiceChannelID);
+                                var existingVoice = await _discord.GetExistingVoiceChannelAsync(dbFaction.DiscordVoiceChannelID)
+                                    .ConfigureAwait(false);
                                 if (existingVoice != null)
                                 {
                                     LoggerUtil.LogDebug(
@@ -500,7 +524,8 @@ namespace TorchDiscordSync.Plugin.Services
                                         .FirstOrDefault(c => c.ChannelType == "Voice" && !c.DeletedOnUndo);
                                     if (createdVoice != null && createdVoice.ChannelID > 0)
                                     {
-                                        var ch = _discord.GetExistingVoiceChannel(createdVoice.ChannelID);
+                                        var ch = await _discord.GetExistingVoiceChannelAsync(createdVoice.ChannelID)
+                                            .ConfigureAwait(false);
                                         if (ch != null)
                                         {
                                             existingVoiceId = createdVoice.ChannelID;
@@ -513,7 +538,8 @@ namespace TorchDiscordSync.Plugin.Services
 
                                 // Fallback 2: search Discord by name
                                 if (existingVoiceId == 0)
-                                    existingVoiceId = _discord.FindVoiceChannelByName(lowcaseName);
+                                    existingVoiceId = await _discord.FindVoiceChannelByNameAsync(lowcaseName)
+                                        .ConfigureAwait(false);
 
                                 if (existingVoiceId > 0)
                                 {

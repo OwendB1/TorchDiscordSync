@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Sandbox.Game;
 using Sandbox.Game.World;
@@ -27,6 +28,7 @@ namespace TorchDiscordSync.Plugin.Services
         private readonly DeathLogService _deathLog;
         private readonly MainConfig _config;
         private readonly DeathMessageHandler _deathHandler;
+        private readonly GameThreadInvoker _gameThread;
         private DeathMessagesConfig _deathMessagesConfig;
 
         // Cache player names for join/leave messages (prevents SteamID display on leave)
@@ -47,6 +49,7 @@ namespace TorchDiscordSync.Plugin.Services
         private Dictionary<ulong, int> _deathEventCounters = new Dictionary<ulong, int>();
 
         private object _lockObject = new object();
+        private int _pollingInProgress;
         private const int CHAT_EVENT_DEDUP_SECONDS = 15;
 
         public event Action OnlinePlayersChanged;
@@ -55,6 +58,7 @@ namespace TorchDiscordSync.Plugin.Services
             EventLoggingService eventLog,
             ITorchBase torch,
             DeathLogService deathLog,
+            GameThreadInvoker gameThread,
             MainConfig config = null,
             DeathMessageHandler deathHandler = null
         )
@@ -62,6 +66,7 @@ namespace TorchDiscordSync.Plugin.Services
             _eventLog = eventLog;
             _torch = torch;
             _deathLog = deathLog;
+            _gameThread = gameThread;
             _config = config;
             _deathHandler = deathHandler;
             _deathMessagesConfig = DeathMessagesConfig.Load();
@@ -188,8 +193,38 @@ namespace TorchDiscordSync.Plugin.Services
 
         private void OnPollingTick(object sender, System.Timers.ElapsedEventArgs e)
         {
-            CheckPlayerChanges();
-            HookNewPlayers();
+            if (Interlocked.Exchange(ref _pollingInProgress, 1) == 1)
+            {
+                LoggerUtil.LogDebug("[TRACKING] Previous polling tick still running; skipping");
+                return;
+            }
+
+            if (_gameThread != null)
+            {
+                _ = _gameThread.RunAsync(() =>
+                {
+                    try
+                    {
+                        CheckPlayerChanges();
+                        HookNewPlayers();
+                    }
+                    finally
+                    {
+                        Interlocked.Exchange(ref _pollingInProgress, 0);
+                    }
+                }, nameof(PlayerTrackingService));
+                return;
+            }
+
+            try
+            {
+                CheckPlayerChanges();
+                HookNewPlayers();
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _pollingInProgress, 0);
+            }
         }
 
         private void CheckPlayerChanges()

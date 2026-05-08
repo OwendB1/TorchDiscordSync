@@ -37,6 +37,7 @@ namespace TorchDiscordSync
         private DiscordBotService           _discordBot;
         private DiscordService              _discordWrapper;
         private EventLoggingService         _eventLog;
+        private GameThreadInvoker           _gameThread;
         private ITorchBase                  _torch;
         private ChatSyncService             _chatSync;
         private DeathLogService             _deathLog;
@@ -85,6 +86,7 @@ namespace TorchDiscordSync
             {
                 PluginUtils.PrintBanner("INITIALIZING");
                 _torch = torch;
+                _gameThread = new GameThreadInvoker(torch);
 
                 // ---- load configuration ----
                 _config = MainConfig.Load();
@@ -103,11 +105,11 @@ namespace TorchDiscordSync
                 // ---- Discord bot ----
                 _discordBot = new DiscordBotService(CreateDiscordRuntimeConfig());
                 _discordWrapper = new DiscordService(_discordBot);
-                _discordPresenceService = new DiscordPresenceService(_config, _discordWrapper);
+                _discordPresenceService = new DiscordPresenceService(_config, _discordWrapper, _gameThread);
                 Task.Run(delegate { return ConnectBotAsync(); });
 
                 // ---- event logging ----
-                _eventLog = new EventLoggingService(_db, _discordWrapper, _config);
+                _eventLog = new EventLoggingService(_db, _discordWrapper, _config, _gameThread);
 
                 // ---- death tracking ----
                 _deathLog = new DeathLogService(_db, _eventLog, _config);
@@ -141,14 +143,14 @@ namespace TorchDiscordSync
                     _eventLog, _config, _damageTracking);
 
                 _playerTracking = new PlayerTrackingService(
-                    _eventLog, _torch, _deathLog, _config, _deathMessageHandler);
+                    _eventLog, _torch, _deathLog, _gameThread, _config, _deathMessageHandler);
                 _playerTracking.OnlinePlayersChanged += OnOnlinePlayersChanged;
 
                 // ---- faction sync ----
-                _factionSync = new FactionSyncService(_db, _discordWrapper, _config);
+                _factionSync = new FactionSyncService(_db, _discordWrapper, _config, _gameThread);
 
                 // ---- chat sync ----
-                _chatSync = new ChatSyncService(_discordWrapper, _config, _db);
+                _chatSync = new ChatSyncService(_discordWrapper, _config, _db, _gameThread);
 
                 // ---- Discord → game message routing ----
                 if (_discordBot != null)
@@ -344,7 +346,20 @@ namespace TorchDiscordSync
 
             try
             {
-                _discordWrapper?.StopAsync().GetAwaiter().GetResult();
+                if (_discordWrapper != null)
+                {
+                    _ = Task.Run(async delegate
+                    {
+                        try
+                        {
+                            await _discordWrapper.StopAsync().ConfigureAwait(false);
+                        }
+                        catch (Exception ex)
+                        {
+                            LoggerUtil.LogError("Error stopping Discord host: " + ex.Message);
+                        }
+                    });
+                }
             }
             catch (Exception ex)
             {
@@ -482,14 +497,19 @@ namespace TorchDiscordSync
         {
             StopMonitoringService();
             DisposePresenceService();
+            EnsurePresenceService();
+            _ = RestartDiscordRuntimeServicesAsync(restartDiscordHost);
+        }
 
+        private async Task RestartDiscordRuntimeServicesAsync(bool restartDiscordHost)
+        {
             if (_discordWrapper != null)
             {
                 if (restartDiscordHost)
                 {
                     try
                     {
-                        _discordWrapper.StopAsync().GetAwaiter().GetResult();
+                        await _discordWrapper.StopAsync().ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
@@ -500,7 +520,7 @@ namespace TorchDiscordSync
 
                     try
                     {
-                        _discordWrapper.StartAsync().GetAwaiter().GetResult();
+                        await _discordWrapper.StartAsync().ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
@@ -513,9 +533,8 @@ namespace TorchDiscordSync
                 {
                     try
                     {
-                        _discordWrapper.UpdateConfigurationAsync(CreateDiscordRuntimeConfig())
-                            .GetAwaiter()
-                            .GetResult();
+                        await _discordWrapper.UpdateConfigurationAsync(CreateDiscordRuntimeConfig())
+                            .ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
@@ -526,7 +545,6 @@ namespace TorchDiscordSync
                 }
             }
 
-            EnsurePresenceService();
             StartLiveSessionServices();
         }
 
@@ -577,7 +595,7 @@ namespace TorchDiscordSync
         private void EnsurePresenceService()
         {
             if (_discordPresenceService == null && _discordWrapper != null)
-                _discordPresenceService = new DiscordPresenceService(_config, _discordWrapper);
+                _discordPresenceService = new DiscordPresenceService(_config, _discordWrapper, _gameThread);
         }
 
         private void StartLiveSessionServices()
@@ -589,7 +607,7 @@ namespace TorchDiscordSync
             {
                 if (_monitoringService == null && _discordBot != null)
                 {
-                    _monitoringService = new MonitoringService(_config, _discordWrapper);
+                    _monitoringService = new MonitoringService(_config, _discordWrapper, _gameThread);
                     _monitoringService.Initialize();
                 }
             }
@@ -728,7 +746,7 @@ namespace TorchDiscordSync
                     {
                         if (_monitoringService == null && _discordBot != null)
                         {
-                            _monitoringService = new MonitoringService(_config, _discordWrapper);
+                            _monitoringService = new MonitoringService(_config, _discordWrapper, _gameThread);
                             _monitoringService.Initialize();
                             LoggerUtil.LogSuccess(
                                 "[MONITORING] MonitoringService initialized after session load");
@@ -756,7 +774,7 @@ namespace TorchDiscordSync
                     // 7. Send server-started status to Discord (delayed for stable SimSpeed)
                     if (_config?.Monitoring?.Enabled == true && _eventLog != null)
                     {
-                        Task.Run(async () =>
+                        _ = Task.Run(async () =>
                         {
                             await Task.Delay(3000).ConfigureAwait(false);
                             var stableSimSpeed = PluginUtils.GetCurrentSimSpeed();
@@ -766,7 +784,7 @@ namespace TorchDiscordSync
 
                     // 8. Run startup routines (faction sync, timer start, etc.)
                     if (_isInitialized)
-                        OnServerLoadedAsync(session);
+                        _ = OnServerLoadedAsync(session);
                     break;
 
                 case TorchSessionState.Unloading:
@@ -791,7 +809,7 @@ namespace TorchDiscordSync
 
                     if (_config?.Monitoring?.Enabled == true && _eventLog != null)
                     {
-                        Task.Run(async () =>
+                        _ = Task.Run(async () =>
                         {
                             await _eventLog.LogServerStatusAsync("STOPPED", 0).ConfigureAwait(false);
                         });
@@ -804,7 +822,7 @@ namespace TorchDiscordSync
         /// Called once after the session has fully loaded.
         /// Performs the initial faction sync and starts the periodic sync timer.
         /// </summary>
-        private void OnServerLoadedAsync(ITorchSession session)
+        private async Task OnServerLoadedAsync(ITorchSession session)
         {
             try
             {
@@ -814,7 +832,7 @@ namespace TorchDiscordSync
                 LoggerUtil.LogInfo("[STARTUP] Initializing server sync...");
 
                 // Report stable SimSpeed after physics settle
-                Task.Run(async () =>
+                _ = Task.Run(async () =>
                 {
                     try
                     {
@@ -835,11 +853,11 @@ namespace TorchDiscordSync
                 });
 
                 // Load factions from the running game session and sync to Discord
-                var factions = _factionSync.LoadFactionsFromGame();
+                var factions = await _factionSync.LoadFactionsFromGameAsync().ConfigureAwait(false);
                 if (factions.Count > 0)
                 {
                     LoggerUtil.LogInfo($"[STARTUP] Found {factions.Count} player factions");
-                    _orchestrator.ExecuteFullSyncAsync(factions).Wait();
+                    await _orchestrator.ExecuteFullSyncAsync(factions).ConfigureAwait(false);
                 }
                 else
                 {
@@ -860,7 +878,8 @@ namespace TorchDiscordSync
             catch (Exception ex)
             {
                 LoggerUtil.LogError("[STARTUP] Error: " + ex.Message);
-                _eventLog?.LogAsync("StartupError", ex.Message).Wait();
+                if (_eventLog != null)
+                    await _eventLog.LogAsync("StartupError", ex.Message).ConfigureAwait(false);
             }
         }
 
@@ -871,10 +890,22 @@ namespace TorchDiscordSync
         private void OnSyncTimerElapsed(object sender, ElapsedEventArgs e)
         {
             if (_config?.Faction?.Enabled == true && _orchestrator != null)
-                _orchestrator.SyncFactionsAsync().Wait();
+                _ = RunScheduledFactionSyncAsync();
             else
                 LoggerUtil.LogDebug(
                     "[SYNC] Faction sync disabled – timer fired but skipped");
+        }
+
+        private async Task RunScheduledFactionSyncAsync()
+        {
+            try
+            {
+                await _orchestrator.SyncFactionsAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                LoggerUtil.LogError("[SYNC] Scheduled faction sync failed: " + ex.Message);
+            }
         }
 
         // ============================================================
@@ -884,18 +915,17 @@ namespace TorchDiscordSync
         /// <summary>
         /// Establish the Discord bot connection asynchronously.
         /// </summary>
-        private Task ConnectBotAsync()
+        private async Task ConnectBotAsync()
         {
             if (_discordWrapper == null)
-                return Task.FromResult(0);
+                return;
 
-            return _discordWrapper.StartAsync().ContinueWith(t =>
+            if (await _discordWrapper.StartAsync().ConfigureAwait(false))
             {
-                if (t.Result)
-                    LoggerUtil.LogInfo(
-                        "Discord host launched and IPC initialized; waiting for Ready state"
-                    );
-            });
+                LoggerUtil.LogInfo(
+                    "Discord host launched and IPC initialized; waiting for Ready state"
+                );
+            }
         }
 
         private DiscordRuntimeConfig CreateDiscordRuntimeConfig()

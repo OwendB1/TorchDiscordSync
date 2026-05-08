@@ -28,10 +28,12 @@ namespace TorchDiscordSync.Plugin.Services
         private readonly DiscordService _discord;
         private readonly MainConfig _config;
         private readonly DatabaseService _db;
+        private readonly GameThreadInvoker _gameThread;
 
         // ---- duplicate / rate-limit tracking ----
         private readonly HashSet<string> _syncedMessages = [];
         private readonly Dictionary<string, DateTime> _lastMessageTime = new();
+        private readonly object _messageCacheLock = new object();
 
         // Rate-limit: minimum milliseconds between messages from the same source
         private const int MESSAGE_THROTTLE_MS = 500;
@@ -40,12 +42,23 @@ namespace TorchDiscordSync.Plugin.Services
         private const int DISCORD_TO_GAME_MAX_LENGTH = 200;
         private const int FACTION_GLOBAL_FALLBACK_MAX_LENGTH = 400;
 
-        public ChatSyncService(DiscordService discord, MainConfig config, DatabaseService db)
+        public ChatSyncService(
+            DiscordService discord,
+            MainConfig config,
+            DatabaseService db,
+            GameThreadInvoker gameThread)
         {
             _discord = discord;
             _config = config;
             _db = db;
+            _gameThread = gameThread;
             LoggerUtil.LogDebug("ChatSyncService initialized");
+        }
+
+        private sealed class FactionDeliveryResult
+        {
+            public string FactionTag { get; set; }
+            public int SentCount { get; set; }
         }
 
         // ============================================================
@@ -66,14 +79,11 @@ namespace TorchDiscordSync.Plugin.Services
                     return;
 
                 var messageKey = playerName + ":" + message;
-                if (_syncedMessages.Contains(messageKey))
+                if (!TryRememberSyncedMessage(messageKey))
                 {
                     LoggerUtil.LogDebug("Chat: duplicate game message suppressed");
                     return;
                 }
-
-                _syncedMessages.Add(messageKey);
-                TrimSyncedMessages();
 
                 var discordMessage = FormatGameMessageForDiscord(playerName, message);
                 if (string.IsNullOrWhiteSpace(discordMessage) || discordMessage.StartsWith("/"))
@@ -127,6 +137,7 @@ namespace TorchDiscordSync.Plugin.Services
                 try
                 {
                     if (string.IsNullOrWhiteSpace(discordUsername) || string.IsNullOrWhiteSpace(message))
+                        return;
 
                     // Prevent echo of TDS-relayed messages
                     if (discordUsername != null && discordUsername.IndexOf("TDS:", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -136,7 +147,7 @@ namespace TorchDiscordSync.Plugin.Services
                     if (!CheckRateLimit(discordUsername + "_discord")) return;
 
                     var messageKey = discordUsername + ":" + message;
-                    if (!_syncedMessages.Add(messageKey))
+                    if (!TryRememberSyncedMessage(messageKey))
                     {
                         LoggerUtil.LogDebug("Chat: duplicate Discord message suppressed");
                         return;
@@ -157,9 +168,21 @@ namespace TorchDiscordSync.Plugin.Services
                         // Author is "Discord" – the loop filter in CommandProcessor.HandleChatMessage
                         // blocks all messages with Author == "Discord" or "TDS" from being re-sent.
                         // playerId=0 → broadcast to ALL players.
-                        MyVisualScriptLogicProvider.SendChatMessage(gameMessage, "Discord", 0, "Blue");
-                        LoggerUtil.LogSuccess($"[G] Broadcasted to all players in game: {gameMessage}"
-                        );
+                        if (_gameThread != null)
+                        {
+                            _ = _gameThread.RunAsync(() =>
+                            {
+                                MyVisualScriptLogicProvider.SendChatMessage(gameMessage, "Discord", 0, "Blue");
+                                LoggerUtil.LogSuccess($"[G] Broadcasted to all players in game: {gameMessage}");
+                                return true;
+                            }, nameof(ChatSyncService));
+                        }
+                        else
+                        {
+                            MyVisualScriptLogicProvider.SendChatMessage(gameMessage, "Discord", 0, "Blue");
+                            LoggerUtil.LogSuccess($"[G] Broadcasted to all players in game: {gameMessage}");
+                        }
+
                         LogChatMessage(discordUsername, message, "discord", "global");
                     }
                     catch (Exception ex)
@@ -218,114 +241,26 @@ namespace TorchDiscordSync.Plugin.Services
                     cleanMessage
                 );
 
-                var players = new List<IMyPlayer>();
-                MyAPIGateway.Players.GetPlayers(players);
-
-                var sent = 0;
                 LoggerUtil.LogInfo(
                     $"[CHAT_DEBUG] Discord→Faction: sending to {faction.Players.Count} faction members"
                 );
 
-                foreach (var fp in faction.Players)
+                var delivery = await SendDiscordMessageToFactionInGameCoreAsync(
+                    faction,
+                    factionMsg,
+                    discordUsername,
+                    cleanMessage)
+                    .ConfigureAwait(false);
+
+                if (delivery.SentCount > 0)
                 {
-                    var player = players.FirstOrDefault(p => (long)p.SteamUserId == fp.SteamID);
-                    if (player == null)
-                    {
-                        LoggerUtil.LogInfo(
-                            $"[CHAT_DEBUG] Discord→Faction: SteamID {fp.SteamID} not in game – skip"
-                        );
-                        continue;
-                    }
-
-                    long targetId = 0;
-                    if (player.Character != null)
-                        targetId = player.Character.EntityId;
-                    if (targetId == 0 && player.IdentityId != 0)
-                        targetId = player.IdentityId;
-
-                    if (targetId == 0)
-                    {
-                        LoggerUtil.LogInfo(
-                            $"[CHAT_DEBUG] Discord→Faction: SteamID {fp.SteamID} no Character/Identity – skip"
-                        );
-                        continue;
-                    }
-
-                    try
-                    {
-                        // Author is "TDS"; the loop-guard in HandleChatMessage
-                        // ensures this never gets forwarded back to Discord.
-                        // playerId=EntityId → private message to this player only.
-                        MyVisualScriptLogicProvider.SendChatMessage(
-                            factionMsg,
-                            "TDS",
-                            targetId,
-                            "Blue"
-                        );
-                        sent++;
-                        LoggerUtil.LogInfo(
-                            string.Format(
-                                "[F][W] Discord→Faction private: sent to SteamID {0} (EntityId={1})",
-                                fp.SteamID,
-                                targetId
-                            )
-                        );
-                    }
-                    catch (Exception ex)
-                    {
-                        LoggerUtil.LogError(
-                            string.Format(
-                                "[CHAT_DEBUG] Discord→Faction: SendChatMessage failed for SteamID {0}: {1}",
-                                fp.SteamID,
-                                ex.Message
-                            )
-                        );
-                    }
-                }
-
-                if (sent > 0)
-                {
-                    // Optional global fallback (author="TDS" → loop-safe)
-                    if (_config?.Faction?.FactionDiscordToGlobalFallback == true)
-                    {
-                        try
-                        {
-                            var broadcastMsg = string.Format(
-                                "[{0} Discord] {1}: {2}",
-                                faction.Tag,
-                                discordUsername,
-                                cleanMessage
-                            );
-
-                            if (broadcastMsg.Length > FACTION_GLOBAL_FALLBACK_MAX_LENGTH)
-                                broadcastMsg = broadcastMsg.Substring(
-                                    0,
-                                    FACTION_GLOBAL_FALLBACK_MAX_LENGTH - 3) + "...";
-
-                            // Author "TDS" is filtered by the loop-guard in HandleChatMessage.
-                            // playerId=0 → global broadcast fallback (visible to all).
-                            LoggerUtil.LogDebug(
-                                $"[G][F] Faction global fallback broadcast: {broadcastMsg}"
-                            );
-                            MyVisualScriptLogicProvider.SendChatMessage(
-                                broadcastMsg,
-                                "TDS",
-                                0,
-                                "Blue"
-                            );
-                        }
-                        catch
-                        { /* non-critical */
-                        }
-                    }
-
                     LoggerUtil.LogInfo(
                         string.Format(
                             "[CHAT] Discord → Faction {0}: {1}: {2} (sent to {3} members)",
-                            faction.Tag,
+                            delivery.FactionTag,
                             discordUsername,
                             message,
-                            sent
+                            delivery.SentCount
                         )
                     );
                 }
@@ -342,6 +277,134 @@ namespace TorchDiscordSync.Plugin.Services
             }
 
             await Task.CompletedTask;
+        }
+
+        private Task<FactionDeliveryResult> SendDiscordMessageToFactionInGameCoreAsync(
+            FactionModel faction,
+            string factionMessage,
+            string discordUsername,
+            string cleanMessage)
+        {
+            if (_gameThread == null)
+            {
+                return Task.FromResult(
+                    SendDiscordMessageToFactionInGameCore(
+                        faction,
+                        factionMessage,
+                        discordUsername,
+                        cleanMessage));
+            }
+
+            return _gameThread.RunAsync(
+                () => SendDiscordMessageToFactionInGameCore(
+                    faction,
+                    factionMessage,
+                    discordUsername,
+                    cleanMessage),
+                nameof(ChatSyncService));
+        }
+
+        private FactionDeliveryResult SendDiscordMessageToFactionInGameCore(
+            FactionModel faction,
+            string factionMessage,
+            string discordUsername,
+            string cleanMessage)
+        {
+            var players = new List<IMyPlayer>();
+            MyAPIGateway.Players.GetPlayers(players);
+
+            var sent = 0;
+            foreach (var fp in faction.Players)
+            {
+                var player = players.FirstOrDefault(p => (long)p.SteamUserId == fp.SteamID);
+                if (player == null)
+                {
+                    LoggerUtil.LogInfo(
+                        $"[CHAT_DEBUG] Discord→Faction: SteamID {fp.SteamID} not in game – skip"
+                    );
+                    continue;
+                }
+
+                long targetId = 0;
+                if (player.Character != null)
+                    targetId = player.Character.EntityId;
+                if (targetId == 0 && player.IdentityId != 0)
+                    targetId = player.IdentityId;
+
+                if (targetId == 0)
+                {
+                    LoggerUtil.LogInfo(
+                        $"[CHAT_DEBUG] Discord→Faction: SteamID {fp.SteamID} no Character/Identity – skip"
+                    );
+                    continue;
+                }
+
+                try
+                {
+                    MyVisualScriptLogicProvider.SendChatMessage(
+                        factionMessage,
+                        "TDS",
+                        targetId,
+                        "Blue"
+                    );
+                    sent++;
+                    LoggerUtil.LogInfo(
+                        string.Format(
+                            "[F][W] Discord→Faction private: sent to SteamID {0} (EntityId={1})",
+                            fp.SteamID,
+                            targetId
+                        )
+                    );
+                }
+                catch (Exception ex)
+                {
+                    LoggerUtil.LogError(
+                        string.Format(
+                            "[CHAT_DEBUG] Discord→Faction: SendChatMessage failed for SteamID {0}: {1}",
+                            fp.SteamID,
+                            ex.Message
+                        )
+                    );
+                }
+            }
+
+            if (sent > 0 && _config?.Faction?.FactionDiscordToGlobalFallback == true)
+            {
+                try
+                {
+                    var broadcastMsg = string.Format(
+                        "[{0} Discord] {1}: {2}",
+                        faction.Tag,
+                        discordUsername,
+                        cleanMessage
+                    );
+
+                    if (broadcastMsg.Length > FACTION_GLOBAL_FALLBACK_MAX_LENGTH)
+                        broadcastMsg = broadcastMsg.Substring(
+                            0,
+                            FACTION_GLOBAL_FALLBACK_MAX_LENGTH - 3) + "...";
+
+                    LoggerUtil.LogDebug(
+                        $"[G][F] Faction global fallback broadcast: {broadcastMsg}"
+                    );
+                    MyVisualScriptLogicProvider.SendChatMessage(
+                        broadcastMsg,
+                        "TDS",
+                        0,
+                        "Blue"
+                    );
+                }
+                catch
+                {
+                    // non-critical
+                }
+            }
+
+            return new FactionDeliveryResult
+            {
+                FactionTag = faction.Tag,
+                SentCount = sent,
+            };
         }
 
         // ============================================================
@@ -425,8 +488,11 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                _syncedMessages.Clear();
-                _lastMessageTime.Clear();
+                lock (_messageCacheLock)
+                {
+                    _syncedMessages.Clear();
+                    _lastMessageTime.Clear();
+                }
                 LoggerUtil.LogDebug("Chat sync cache cleared");
             }
             catch (Exception ex)
@@ -540,22 +606,38 @@ namespace TorchDiscordSync.Plugin.Services
         {
             try
             {
-                DateTime lastTime;
-                if (!_lastMessageTime.TryGetValue(key, out lastTime))
+                lock (_messageCacheLock)
                 {
+                    DateTime lastTime;
+                    if (!_lastMessageTime.TryGetValue(key, out lastTime))
+                    {
+                        _lastMessageTime[key] = DateTime.UtcNow;
+                        return true;
+                    }
+
+                    var msSinceLast = (int)(DateTime.UtcNow - lastTime).TotalMilliseconds;
+                    if (msSinceLast < MESSAGE_THROTTLE_MS)
+                        return false;
+
                     _lastMessageTime[key] = DateTime.UtcNow;
                     return true;
                 }
-
-                var msSinceLast = (int)(DateTime.UtcNow - lastTime).TotalMilliseconds;
-                if (msSinceLast < MESSAGE_THROTTLE_MS)
-                    return false;
-
-                _lastMessageTime[key] = DateTime.UtcNow;
-                return true;
             }
             catch
             {
+                return true;
+            }
+        }
+
+        private bool TryRememberSyncedMessage(string messageKey)
+        {
+            lock (_messageCacheLock)
+            {
+                if (_syncedMessages.Contains(messageKey))
+                    return false;
+
+                _syncedMessages.Add(messageKey);
+                TrimSyncedMessages();
                 return true;
             }
         }
