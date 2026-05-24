@@ -251,6 +251,10 @@ namespace TorchDiscordSync.Plugin.UI
                 "Available placeholders: {p}, {pp}");
             AddTextRow(
                 panel,
+                "Channel rename cooldown (seconds)",
+                "WorkingCopy.Monitoring.ChannelRenameCooldownSeconds");
+            AddTextRow(
+                panel,
                 "Player count alert threshold",
                 "WorkingCopy.Monitoring.PlayerCountAlertThreshold");
             AddTextRow(

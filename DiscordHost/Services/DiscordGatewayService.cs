@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -14,8 +15,11 @@ namespace TorchDiscordSync.DiscordHost.Services
     internal sealed class DiscordGatewayService
     {
         private const string LegacyTextCommandPrefix = "!";
+        private static readonly TimeSpan ChannelRenameFailureBackoff = TimeSpan.FromMinutes(10);
 
         private readonly SemaphoreSlim _stateLock = new(1, 1);
+        private readonly ConcurrentDictionary<ulong, ChannelRenameState> _channelRenameStates =
+            new ConcurrentDictionary<ulong, ChannelRenameState>();
         private DiscordRuntimeConfig _config;
         private DiscordSocketClient _client;
         private bool _isConnected;
@@ -28,6 +32,12 @@ namespace TorchDiscordSync.DiscordHost.Services
 
         public event Func<DiscordIncomingMessage, Task> MessageReceived;
         public event Func<DiscordConnectionState, Task> ConnectionStateChanged;
+
+        private sealed class ChannelRenameState
+        {
+            public SemaphoreSlim Gate { get; } = new SemaphoreSlim(1, 1);
+            public DateTime BackoffUntilUtc { get; set; } = DateTime.MinValue;
+        }
 
         public DiscordConnectionState GetConnectionState()
         {
@@ -394,8 +404,14 @@ namespace TorchDiscordSync.DiscordHost.Services
 
         public async Task<bool> UpdateChannelNameAsync(DiscordUpdateChannelNameRequest request)
         {
+            ChannelRenameState state = null;
+            var lockTaken = false;
+
             try
             {
+                if (request == null || request.ChannelId == 0 || string.IsNullOrWhiteSpace(request.NewName))
+                    return false;
+
                 var guild = GetGuild();
                 if (guild == null)
                     return false;
@@ -404,13 +420,52 @@ namespace TorchDiscordSync.DiscordHost.Services
                 if (channel == null)
                     return false;
 
+                state = _channelRenameStates.GetOrAdd(request.ChannelId, _ => new ChannelRenameState());
+                await state.Gate.WaitAsync().ConfigureAwait(false);
+                lockTaken = true;
+
+                if (string.Equals(channel.Name, request.NewName, StringComparison.Ordinal))
+                {
+                    state.BackoffUntilUtc = DateTime.MinValue;
+                    return true;
+                }
+
+                if (DateTime.UtcNow < state.BackoffUntilUtc)
+                {
+                    HostLogger.Debug(
+                        "Skipping channel rename for " + request.ChannelId
+                        + " until " + state.BackoffUntilUtc.ToString("O"));
+                    return false;
+                }
+
                 await channel.ModifyAsync(props => { props.Name = request.NewName; }).ConfigureAwait(false);
+                state.BackoffUntilUtc = DateTime.MinValue;
                 return true;
+            }
+            catch (Exception ex) when (ShouldBackOffChannelRename(ex))
+            {
+                var backoffUntilUtc = DateTime.UtcNow.Add(ChannelRenameFailureBackoff);
+                if (state != null)
+                    state.BackoffUntilUtc = backoffUntilUtc;
+
+                HostLogger.Warn(
+                    "UpdateChannelNameAsync entering backoff for channel "
+                    + request?.ChannelId
+                    + " until "
+                    + backoffUntilUtc.ToString("O")
+                    + ": "
+                    + ex.Message);
+                return false;
             }
             catch (Exception ex)
             {
                 HostLogger.Error("UpdateChannelNameAsync failed: " + ex.Message);
                 return false;
+            }
+            finally
+            {
+                if (lockTaken)
+                    state.Gate.Release();
             }
         }
 
@@ -527,6 +582,17 @@ namespace TorchDiscordSync.DiscordHost.Services
         private bool EnsureReady()
         {
             return _isReady && _client != null && _config != null;
+        }
+
+        private static bool ShouldBackOffChannelRename(Exception ex)
+        {
+            if (ex is TimeoutException)
+                return true;
+
+            var message = ex.Message ?? string.Empty;
+            return message.IndexOf("rate limit", StringComparison.OrdinalIgnoreCase) >= 0
+                   || message.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0
+                   || message.IndexOf("timeout", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private SocketGuild GetGuild()

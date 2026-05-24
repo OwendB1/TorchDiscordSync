@@ -237,6 +237,8 @@ namespace TorchDiscordSync.Plugin.Config
                 CleanupIntervalSeconds = 30;
             if (DamageHistoryMaxSeconds <= 0)
                 DamageHistoryMaxSeconds = 15;
+            if (Monitoring.ChannelRenameCooldownSeconds <= 0)
+                Monitoring.ChannelRenameCooldownSeconds = 600;
         }
 
         public MainConfig Clone()
@@ -596,6 +598,9 @@ namespace TorchDiscordSync.Plugin.Config
         public string PlayerCountChannelNameFormat { get; set; }
 
         [XmlElement]
+        public int ChannelRenameCooldownSeconds { get; set; }
+
+        [XmlElement]
         public bool EnablePlayerCountAlerts { get; set; }
 
         [XmlElement]
@@ -633,6 +638,7 @@ namespace TorchDiscordSync.Plugin.Config
             SimSpeedAlertCooldownSeconds = 1200;
             EnablePlayerCountMonitoring = true;
             PlayerCountChannelNameFormat = "👥 {p}/{pp} players";
+            ChannelRenameCooldownSeconds = 600;
             EnablePlayerCountAlerts = false;
             PlayerCountAlertThreshold = 10;
             PlayerCountAlertMessage = "📊 Player count: **{p}** / {pp}";

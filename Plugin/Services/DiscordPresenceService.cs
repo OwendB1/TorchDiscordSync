@@ -138,7 +138,7 @@ namespace TorchDiscordSync.Plugin.Services
                         && Interlocked.Exchange(ref _pendingUpdate, 0) == 1)
                     {
                         var presenceText = await BuildPresenceTextAsync().ConfigureAwait(false);
-                        await UpdatePresenceAsync(presenceText, true).ConfigureAwait(false);
+                        await UpdatePresenceAsync(presenceText, false).ConfigureAwait(false);
                     }
                 }
                 finally
@@ -201,7 +201,10 @@ namespace TorchDiscordSync.Plugin.Services
                 return;
             }
 
-            var updated = await _discord.UpdatePresenceAsync(presenceText, forceUpdate).ConfigureAwait(false);
+            var updated = await _discord.UpdatePresenceAsync(
+                    presenceText,
+                    shouldForceUpdate)
+                .ConfigureAwait(false);
             if (updated)
             {
                 _lastPresenceText = presenceText;

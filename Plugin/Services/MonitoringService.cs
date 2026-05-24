@@ -1,5 +1,6 @@
 // Plugin/Services/MonitoringService.cs
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Timers;
 using Sandbox.Game.World;
@@ -11,9 +12,14 @@ namespace TorchDiscordSync.Plugin.Services
 {
     public class MonitoringService : IDisposable
     {
+        private const int DefaultChannelRenameCooldownSeconds = 600;
+
         private readonly MainConfig _config;
         private readonly DiscordService _discord;
         private readonly GameThreadInvoker _gameThread;
+        private readonly Dictionary<ulong, MonitoredChannelState> _channelUpdateStates =
+            new Dictionary<ulong, MonitoredChannelState>();
+        private readonly object _channelUpdateStateLock = new object();
         private Timer _monitoringTimer;
         private bool _isDisposed = false;
         private int _updateInProgress;
@@ -33,6 +39,22 @@ namespace TorchDiscordSync.Plugin.Services
             public float SimSpeed { get; set; }
             public int PlayerCount { get; set; }
             public int MaxPlayers { get; set; }
+        }
+
+        private sealed class MonitoredChannelState
+        {
+            public string LastAppliedName { get; set; }
+            public string PendingName { get; set; }
+            public DateTime NextAllowedUpdateUtc { get; set; } = DateTime.MinValue;
+            public DateTime LastDeferredLogUtc { get; set; } = DateTime.MinValue;
+        }
+
+        private enum MonitoredChannelUpdateResult
+        {
+            NoChange,
+            Deferred,
+            Applied,
+            Failed,
         }
 
         public MonitoringService(MainConfig config, DiscordService discord, GameThreadInvoker gameThread)
@@ -134,11 +156,23 @@ namespace TorchDiscordSync.Plugin.Services
 
                 if (_config.Monitoring.EnableSimSpeedMonitoring)
                 {
-                    if (Math.Abs(currentSimSpeed - _lastSimSpeed) > 0.01f)
+                    var simSpeedChanged = Math.Abs(currentSimSpeed - _lastSimSpeed) > 0.01f;
+                    var simSpeedPending = HasPendingChannelUpdate(_config.Discord.SimSpeedChannelId);
+                    if (simSpeedChanged || simSpeedPending)
                     {
-                        LoggerUtil.LogDebug(
-                            $"[MONITORING_UPDATE] SimSpeed changed: {_lastSimSpeed:F2} → {currentSimSpeed:F2}"
-                        );
+                        if (simSpeedChanged)
+                        {
+                            LoggerUtil.LogDebug(
+                                $"[MONITORING_UPDATE] SimSpeed changed: {_lastSimSpeed:F2} → {currentSimSpeed:F2}"
+                            );
+                        }
+                        else
+                        {
+                            LoggerUtil.LogDebug(
+                                "[MONITORING_UPDATE] SimSpeed rename still pending; retrying latest value"
+                            );
+                        }
+
                         await UpdateSimSpeedChannelAsync(currentSimSpeed).ConfigureAwait(false);
                         _lastSimSpeed = currentSimSpeed;
                     }
@@ -150,19 +184,36 @@ namespace TorchDiscordSync.Plugin.Services
                     }
                 }
 
-                if (currentPlayerCount != _lastPlayerCount)
+                if (_config.Monitoring.EnablePlayerCountMonitoring)
                 {
-                    LoggerUtil.LogDebug(
-                        $"[MONITORING_UPDATE] Player count changed: {_lastPlayerCount} → {currentPlayerCount}"
-                    );
-                    await UpdatePlayerCountChannelAsync(currentPlayerCount, snapshot.MaxPlayers).ConfigureAwait(false);
-                    _lastPlayerCount = currentPlayerCount;
-                }
-                else
-                {
-                    LoggerUtil.LogDebug(
-                        "[MONITORING_UPDATE] Player count unchanged, skipping update"
-                    );
+                    var playerCountChanged = currentPlayerCount != _lastPlayerCount;
+                    var playerCountPending = HasPendingChannelUpdate(
+                        _config.Discord.PlayerCountChannelId);
+                    if (playerCountChanged || playerCountPending)
+                    {
+                        if (playerCountChanged)
+                        {
+                            LoggerUtil.LogDebug(
+                                $"[MONITORING_UPDATE] Player count changed: {_lastPlayerCount} → {currentPlayerCount}"
+                            );
+                        }
+                        else
+                        {
+                            LoggerUtil.LogDebug(
+                                "[MONITORING_UPDATE] Player-count rename still pending; retrying latest value"
+                            );
+                        }
+
+                        await UpdatePlayerCountChannelAsync(currentPlayerCount, snapshot.MaxPlayers)
+                            .ConfigureAwait(false);
+                        _lastPlayerCount = currentPlayerCount;
+                    }
+                    else
+                    {
+                        LoggerUtil.LogDebug(
+                            "[MONITORING_UPDATE] Player count unchanged, skipping update"
+                        );
+                    }
                 }
 
                 LoggerUtil.LogDebug("[MONITORING_UPDATE] Channel name update complete");
@@ -205,8 +256,23 @@ namespace TorchDiscordSync.Plugin.Services
 
                 LoggerUtil.LogDebug("[MONITORING_SIMSPEED] Setting channel name to: " + newName);
 
-                var updated = await _discord.UpdateChannelNameAsync(channelId, newName).ConfigureAwait(false);
-                if (!updated)
+                var updateResult = await TryUpdateMonitoredChannelNameAsync(
+                        channelId,
+                        newName,
+                        "MONITORING_SIMSPEED")
+                    .ConfigureAwait(false);
+                if (updateResult == MonitoredChannelUpdateResult.NoChange)
+                {
+                    LoggerUtil.LogDebug(
+                        "[MONITORING_SIMSPEED] Channel name already matches desired value"
+                    );
+                    return;
+                }
+
+                if (updateResult == MonitoredChannelUpdateResult.Deferred)
+                    return;
+
+                if (updateResult == MonitoredChannelUpdateResult.Failed)
                 {
                     LoggerUtil.LogError(
                         "[MONITORING_SIMSPEED] Failed to update channel name for " + channelId
@@ -303,8 +369,23 @@ namespace TorchDiscordSync.Plugin.Services
 
                 LoggerUtil.LogDebug("[MONITORING_PLAYERS] Setting channel name to: " + newName);
 
-                var updated = await _discord.UpdateChannelNameAsync(channelId, newName).ConfigureAwait(false);
-                if (!updated)
+                var updateResult = await TryUpdateMonitoredChannelNameAsync(
+                        channelId,
+                        newName,
+                        "MONITORING_PLAYERS")
+                    .ConfigureAwait(false);
+                if (updateResult == MonitoredChannelUpdateResult.NoChange)
+                {
+                    LoggerUtil.LogDebug(
+                        "[MONITORING_PLAYERS] Channel name already matches desired value"
+                    );
+                    return;
+                }
+
+                if (updateResult == MonitoredChannelUpdateResult.Deferred)
+                    return;
+
+                if (updateResult == MonitoredChannelUpdateResult.Failed)
                 {
                     LoggerUtil.LogError(
                         "[MONITORING_PLAYERS] Failed to update channel name for " + channelId
@@ -362,6 +443,101 @@ namespace TorchDiscordSync.Plugin.Services
             {
                 LoggerUtil.LogError("[MONITORING] Send admin alert error: " + ex.Message);
             }
+        }
+
+        private bool HasPendingChannelUpdate(ulong channelId)
+        {
+            if (channelId == 0)
+                return false;
+
+            lock (_channelUpdateStateLock)
+            {
+                return _channelUpdateStates.TryGetValue(channelId, out var state)
+                       && !string.IsNullOrWhiteSpace(state.PendingName);
+            }
+        }
+
+        private async Task<MonitoredChannelUpdateResult> TryUpdateMonitoredChannelNameAsync(
+            ulong channelId,
+            string newName,
+            string logContext)
+        {
+            if (channelId == 0 || string.IsNullOrWhiteSpace(newName))
+                return MonitoredChannelUpdateResult.Failed;
+
+            TimeSpan remainingCooldown;
+            lock (_channelUpdateStateLock)
+            {
+                var state = GetOrCreateChannelUpdateState(channelId);
+                var previousPendingName = state.PendingName;
+
+                if (string.Equals(state.LastAppliedName, newName, StringComparison.Ordinal))
+                {
+                    state.PendingName = null;
+                    state.LastDeferredLogUtc = DateTime.MinValue;
+                    return MonitoredChannelUpdateResult.NoChange;
+                }
+
+                state.PendingName = newName;
+
+                var now = DateTime.UtcNow;
+                if (now < state.NextAllowedUpdateUtc)
+                {
+                    remainingCooldown = state.NextAllowedUpdateUtc - now;
+                    var shouldLogDeferred =
+                        !string.Equals(previousPendingName, newName, StringComparison.Ordinal)
+                        || (now - state.LastDeferredLogUtc).TotalSeconds >= 60;
+                    if (shouldLogDeferred)
+                    {
+                        state.LastDeferredLogUtc = now;
+                        LoggerUtil.LogDebug(
+                            $"[{logContext}] Deferring rename for {channelId} for another {remainingCooldown.TotalSeconds:F0}s"
+                        );
+                    }
+
+                    return MonitoredChannelUpdateResult.Deferred;
+                }
+            }
+
+            var updated = await _discord.UpdateChannelNameAsync(channelId, newName).ConfigureAwait(false);
+
+            lock (_channelUpdateStateLock)
+            {
+                var state = GetOrCreateChannelUpdateState(channelId);
+                if (updated)
+                {
+                    state.LastAppliedName = newName;
+                    state.PendingName = null;
+                    state.NextAllowedUpdateUtc = DateTime.UtcNow.Add(GetChannelRenameCooldown());
+                    state.LastDeferredLogUtc = DateTime.MinValue;
+                    return MonitoredChannelUpdateResult.Applied;
+                }
+
+                state.PendingName = newName;
+            }
+
+            return MonitoredChannelUpdateResult.Failed;
+        }
+
+        private MonitoredChannelState GetOrCreateChannelUpdateState(ulong channelId)
+        {
+            if (!_channelUpdateStates.TryGetValue(channelId, out var state))
+            {
+                state = new MonitoredChannelState();
+                _channelUpdateStates[channelId] = state;
+            }
+
+            return state;
+        }
+
+        private TimeSpan GetChannelRenameCooldown()
+        {
+            var seconds = _config?.Monitoring?.ChannelRenameCooldownSeconds
+                          ?? DefaultChannelRenameCooldownSeconds;
+            if (seconds <= 0)
+                seconds = DefaultChannelRenameCooldownSeconds;
+
+            return TimeSpan.FromSeconds(seconds);
         }
 
         private Task<MonitoringSnapshot> CaptureSnapshotAsync()
