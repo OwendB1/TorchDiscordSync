@@ -13,7 +13,7 @@ namespace mamba.TorchDiscordSync.Plugin.Config
         // ===================================================================
         // VERSION (Managed by build.py)
         // ===================================================================
-        public string PluginVersion { get; set; } = "2.4.60";
+        public string PluginVersion { get; set; } = "2.4.65";
 
         // ============================================================
         // CENTRAL PATH MANAGEMENT - Single Point of Control
@@ -397,6 +397,19 @@ namespace mamba.TorchDiscordSync.Plugin.Config
         [XmlElement]
         public bool StripEmojisForInGameChat { get; set; }
 
+        // ========== THIRD-PARTY CHAT BOT FILTER ==========
+        /// <summary>
+        /// Author names to silently drop before they reach Discord/the relay logic.
+        /// Use this when another bot or mod on the server echoes/reposts player
+        /// messages back into in-game chat under its own display name (e.g. "Good.bot"),
+        /// which would otherwise be forwarded to Discord a second time, duplicating
+        /// every message. Comparison is case-insensitive. Empty by default — add the
+        /// exact author name as shown in the duplicated chat line to silence it.
+        /// </summary>
+        [XmlArray("IgnoredChatAuthors")]
+        [XmlArrayItem("Author")]
+        public string[] IgnoredChatAuthors { get; set; }
+
         public ChatConfig()
         {
             Enabled = false;
@@ -421,6 +434,7 @@ namespace mamba.TorchDiscordSync.Plugin.Config
             MuteMessage = "?? You have been muted for {minutes} minutes due to repeated violations.";
             KickMessage = "?? You have been removed from the channel for repeated violations.";
             AdminLogChannelId = 0;
+            IgnoredChatAuthors = new string[0];
         }
     }
 

@@ -9,10 +9,10 @@ Unlike simple chat relays, **TorchDiscordSync** focuses on *deep game integratio
 | Property | Value |
 | :--- | :--- |
 | **C# / Runtime** | C# 6.0 / .NET Framework 4.8 Syntax |
-| **Torch** | v2.4.60.328-master (2.4.49+) |
+| **Torch** | v2.4.65.328-master (2.4.49+) |
 | **Space Engineers** | 1.208.15+ |
 | **Author** | mamba |
-| **Version** | 2.4.60 |
+| **Version** | 2.4.65 |
 
 ---
 
@@ -586,6 +586,16 @@ Controls the chat relay and optional in-game chat moderation.
 | `MuteDurationMinutes` | `10` | Duration of a mute |
 | `MaxMutesBeforeKick` | `2` | Mutes before a player is kicked |
 | `AdminLogChannelId` | `0` | Channel for moderation action logs |
+| `IgnoredChatAuthors` | *(empty)* | List of in-game chat author names to silently drop before relaying to Discord. Use this if another bot or mod on your server echoes/reposts player messages back into chat (e.g. a translator or repeat bot), which would otherwise be duplicated on Discord. Comparison is case-insensitive — add the exact name shown in the duplicated line. |
+
+```xml
+<Chat>
+  <IgnoredChatAuthors>
+    <Author>Good.bot</Author>
+  </IgnoredChatAuthors>
+</Chat>
+```
+> If you see every chat message appearing twice on Discord, check whether another bot is echoing chat in-game and add its exact display name here.
 
 ---
 

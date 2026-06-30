@@ -145,8 +145,11 @@ namespace mamba.TorchDiscordSync.Plugin.Handlers
                 //   "Discord" – global Discord-to-game broadcasts
                 //   "Server"  – join/leave/death announcements already sent
                 //              directly by EventLoggingService / DeathMessageHandler
+                //   IgnoredChatAuthors – admin-configured list of additional bots
+                //              or mods (e.g. "Good.bot") that echo chat back into
+                //              the game and would otherwise be duplicated to Discord.
                 // ----------------------------------------------------------
-                if (msg.Author == "TDS" || msg.Author == "Discord" || msg.Author == "Server")
+                if (msg.Author == "TDS" || msg.Author == "Discord" || msg.Author == "Server" || IsIgnoredChatAuthor(msg.Author))
                 {
                     LoggerUtil.LogDebug(
                         string.Format(
@@ -238,6 +241,31 @@ namespace mamba.TorchDiscordSync.Plugin.Handlers
                     string.Format("Error in chat message processing: {0}", ex.Message)
                 );
             }
+        }
+
+        // ---- loop guard helper --------------------------------------------
+
+        /// <summary>
+        /// Checks msg.Author against the admin-configured Chat.IgnoredChatAuthors list
+        /// (case-insensitive). Lets admins silence third-party bots/mods (e.g. a chat
+        /// echo bot like "Good.bot") that re-post player messages into game chat,
+        /// without requiring a plugin code change for every server's specific setup.
+        /// </summary>
+        private bool IsIgnoredChatAuthor(string author)
+        {
+            if (string.IsNullOrEmpty(author))
+                return false;
+
+            var ignoredList = _config?.Chat?.IgnoredChatAuthors;
+            if (ignoredList == null || ignoredList.Length == 0)
+                return false;
+
+            for (int i = 0; i < ignoredList.Length; i++)
+            {
+                if (string.Equals(ignoredList[i], author, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
         }
 
         // ---- faction chat helper ----------------------------------------

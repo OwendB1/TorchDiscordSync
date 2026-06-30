@@ -1,5 +1,7 @@
-## [2.4.60] - 2026-06-01
+## [2.4.65] - 2026-06-30
 
+- 0bd1a05 readme update
+- 23810ad fix(chat): add IgnoredChatAuthors filter to stop relay duplication from third-party bots
 - 8238594 feat: implement language selection dropdown, update README
 - 2c5076e updated readme, fix lang dir
 - 3cf1a82 feat: add settings UI, localization engine, and fix NPC log tracking
@@ -28,8 +30,6 @@
 - e7914c0 sync
 - 6fc0cc9 [2.4.37] | readme + changelog update
 - 98ed1d9 update
-- 8f10f3e update
-- eb32a0c [2.4.37] | readme + changelog update
 
 ## [2.4.50] - 2026-05-09
 
