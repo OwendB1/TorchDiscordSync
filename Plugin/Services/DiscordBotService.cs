@@ -38,7 +38,7 @@ namespace TorchDiscordSync.Plugin.Services
                 new ConcurrentDictionary<string, TaskCompletionSource<DiscordIpcEnvelope>>();
 
         private DiscordRuntimeConfig _config;
-        private DiscordConnectionState _connectionState = new DiscordConnectionState();
+        private volatile DiscordConnectionState _connectionState = new DiscordConnectionState();
         private Task _eventDispatchTask = Task.FromResult(0);
         private CancellationTokenSource _pipeCancellation;
         private Task _readerTask;
@@ -56,12 +56,12 @@ namespace TorchDiscordSync.Plugin.Services
 
         public bool IsConnected
         {
-            get { return _connectionState != null && _connectionState.IsConnected; }
+            get { return _connectionState.IsConnected; }
         }
 
         public bool IsReady
         {
-            get { return _connectionState != null && _connectionState.IsReady; }
+            get { return _connectionState.IsReady; }
         }
 
         public async Task<bool> StartAsync()
@@ -426,7 +426,6 @@ namespace TorchDiscordSync.Plugin.Services
         private async Task<bool> InitializeOrUpdateAsync(string operation)
         {
             var response = await SendRequestAsync(operation, _config, 60000).ConfigureAwait(false);
-            ApplyConnectionState(response.Payload as DiscordConnectionState);
 
             if (!response.Success && !string.IsNullOrWhiteSpace(response.Error))
             {
@@ -541,6 +540,15 @@ namespace TorchDiscordSync.Plugin.Services
 
                     if (string.Equals(envelope.Kind, DiscordIpcKinds.Event, StringComparison.Ordinal))
                     {
+                        // Publish the cached state in pipe order even when chat handlers are busy.
+                        if (envelope.Operation == DiscordIpcEvents.ConnectionStateChanged)
+                        {
+                            _connectionState = envelope.Payload as DiscordConnectionState
+                                ?? new DiscordConnectionState();
+                            if (OnConnectionStateChanged == null)
+                                continue;
+                        }
+
                         QueueEventDispatch(envelope);
                     }
                 }
@@ -589,7 +597,8 @@ namespace TorchDiscordSync.Plugin.Services
                         break;
 
                     case DiscordIpcEvents.ConnectionStateChanged:
-                        ApplyConnectionState(envelope.Payload as DiscordConnectionState);
+                        OnConnectionStateChanged?.Invoke(
+                            envelope.Payload as DiscordConnectionState ?? new DiscordConnectionState());
                         break;
                 }
             }

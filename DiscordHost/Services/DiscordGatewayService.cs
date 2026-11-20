@@ -20,15 +20,9 @@ namespace TorchDiscordSync.DiscordHost.Services
         private readonly SemaphoreSlim _stateLock = new(1, 1);
         private readonly ConcurrentDictionary<ulong, ChannelRenameState> _channelRenameStates =
             new ConcurrentDictionary<ulong, ChannelRenameState>();
-        private DiscordRuntimeConfig _config;
-        private DiscordSocketClient _client;
-        private bool _isConnected;
-        private bool _isReady;
-        private bool _applicationCommandsRegistered;
-        private bool _suppressReconnect;
-        private bool _statusSetOnline;
+        private volatile DiscordRuntimeConfig _config;
+        private volatile DiscordSocketClient _client;
         private string _lastPresenceText;
-        private int _isReconnecting;
 
         public event Func<DiscordIncomingMessage, Task> MessageReceived;
         public event Func<DiscordConnectionState, Task> ConnectionStateChanged;
@@ -41,10 +35,11 @@ namespace TorchDiscordSync.DiscordHost.Services
 
         public DiscordConnectionState GetConnectionState()
         {
+            var connected = GetConnectedClient() != null;
             return new DiscordConnectionState
             {
-                IsConnected = _isConnected,
-                IsReady = _isReady,
+                IsConnected = connected,
+                IsReady = connected,
             };
         }
 
@@ -62,22 +57,23 @@ namespace TorchDiscordSync.DiscordHost.Services
             await _stateLock.WaitAsync().ConfigureAwait(false);
             try
             {
-                var requiresReconnect =
-                    _client == null
-                    || _config == null
-                    || !string.Equals(_config.BotToken, config.BotToken, StringComparison.Ordinal)
-                    || _config.GuildId != config.GuildId;
-
-                _config = config;
-
-                if (!requiresReconnect)
+                if (_client != null
+                    && string.Equals(_config.BotToken, config.BotToken, StringComparison.Ordinal)
+                    && _config.GuildId == config.GuildId)
+                {
+                    _config = config;
                     return true;
+                }
 
-                _suppressReconnect = true;
                 await DisconnectCoreAsync().ConfigureAwait(false);
-                _suppressReconnect = false;
-
-                return await ConnectCoreAsync().ConfigureAwait(false);
+                _config = config;
+                await ConnectCoreAsync(config).ConfigureAwait(false);
+                return true;
+            }
+            catch
+            {
+                await DisconnectCoreAsync().ConfigureAwait(false);
+                throw;
             }
             finally
             {
@@ -90,7 +86,6 @@ namespace TorchDiscordSync.DiscordHost.Services
             await _stateLock.WaitAsync().ConfigureAwait(false);
             try
             {
-                _suppressReconnect = true;
                 await DisconnectCoreAsync().ConfigureAwait(false);
             }
             finally
@@ -103,10 +98,11 @@ namespace TorchDiscordSync.DiscordHost.Services
         {
             try
             {
-                if (!EnsureReady())
+                var client = GetConnectedClient();
+                if (client == null)
                     return false;
 
-                var channel = _client.GetChannel(request.ChannelId) as IMessageChannel;
+                var channel = client.GetChannel(request.ChannelId) as IMessageChannel;
                 if (channel == null)
                     return false;
 
@@ -124,10 +120,11 @@ namespace TorchDiscordSync.DiscordHost.Services
         {
             try
             {
-                if (!EnsureReady())
+                var client = GetConnectedClient();
+                if (client == null)
                     return false;
 
-                var channel = _client.GetChannel(request.ChannelId) as IMessageChannel;
+                var channel = client.GetChannel(request.ChannelId) as IMessageChannel;
                 if (channel == null)
                     return false;
 
@@ -473,20 +470,15 @@ namespace TorchDiscordSync.DiscordHost.Services
         {
             try
             {
-                if (!EnsureReady() || request == null || string.IsNullOrWhiteSpace(request.StatusText))
+                var client = GetConnectedClient();
+                if (client == null || request == null || string.IsNullOrWhiteSpace(request.StatusText))
                     return false;
 
                 if (!request.ForceUpdate
                     && string.Equals(request.StatusText, _lastPresenceText, StringComparison.Ordinal))
                     return true;
 
-                if (!_statusSetOnline)
-                {
-                    await _client.SetStatusAsync(UserStatus.Online).ConfigureAwait(false);
-                    _statusSetOnline = true;
-                }
-
-                await _client.SetActivityAsync(new CustomStatusGame(request.StatusText)).ConfigureAwait(false);
+                await client.SetActivityAsync(new CustomStatusGame(request.StatusText)).ConfigureAwait(false);
                 _lastPresenceText = request.StatusText;
                 return true;
             }
@@ -497,11 +489,9 @@ namespace TorchDiscordSync.DiscordHost.Services
             }
         }
 
-        private async Task<bool> ConnectCoreAsync()
+        private async Task ConnectCoreAsync(DiscordRuntimeConfig config)
         {
-            if (_isConnected || _config == null) return true;
-
-            var config = new DiscordSocketConfig
+            var client = new DiscordSocketClient(new DiscordSocketConfig
             {
                 GatewayIntents =
                     GatewayIntents.Guilds
@@ -509,79 +499,61 @@ namespace TorchDiscordSync.DiscordHost.Services
                     | GatewayIntents.GuildMembers
                     | GatewayIntents.MessageContent,
                 AlwaysDownloadUsers = false,
+            });
+            _client = client;
+            client.Log += OnClientLog;
+            client.Connected += OnBotConnected;
+            client.Disconnected += OnBotDisconnected;
+            var commandsRegistered = false;
+            client.Ready += async () =>
+            {
+                commandsRegistered = await OnBotReadyAsync(client, config.GuildId, commandsRegistered)
+                    .ConfigureAwait(false);
             };
+            client.MessageReceived += OnMessageReceivedAsync;
+            client.SlashCommandExecuted += OnSlashCommandExecutedAsync;
 
-            _client = new DiscordSocketClient(config);
-            _client.Log += OnClientLog;
-            _client.Ready += OnBotReady;
-            _client.Disconnected += OnBotDisconnected;
-            _client.MessageReceived += OnMessageReceivedAsync;
-            _client.SlashCommandExecuted += OnSlashCommandExecutedAsync;
+            await client.SetStatusAsync(UserStatus.Online).ConfigureAwait(false);
+            await client.SetGameAsync("/tds help", type: ActivityType.Listening).ConfigureAwait(false);
+            await client.LoginAsync(TokenType.Bot, config.BotToken).ConfigureAwait(false);
+            await client.StartAsync().ConfigureAwait(false);
 
-            await _client.LoginAsync(TokenType.Bot, _config.BotToken).ConfigureAwait(false);
-            await _client.StartAsync().ConfigureAwait(false);
-
-            _isConnected = true;
-            _applicationCommandsRegistered = false;
-            await PublishStateAsync().ConfigureAwait(false);
             HostLogger.Info("Discord gateway start requested.");
-            return true;
         }
 
         private async Task DisconnectCoreAsync()
         {
-            if (_client == null)
-            {
-                _isConnected = false;
-                _isReady = false;
-                _statusSetOnline = false;
-                _lastPresenceText = null;
-                await PublishStateAsync().ConfigureAwait(false);
+            var client = _client;
+            if (client == null)
                 return;
-            }
 
+            _client = null;
+            _lastPresenceText = null;
+            client.Log -= OnClientLog;
+            client.Connected -= OnBotConnected;
+            client.Disconnected -= OnBotDisconnected;
+            client.MessageReceived -= OnMessageReceivedAsync;
+            client.SlashCommandExecuted -= OnSlashCommandExecutedAsync;
             try
             {
-                _client.Log -= OnClientLog;
-                _client.Ready -= OnBotReady;
-                _client.Disconnected -= OnBotDisconnected;
-                _client.MessageReceived -= OnMessageReceivedAsync;
-                _client.SlashCommandExecuted -= OnSlashCommandExecutedAsync;
-
-                try
-                {
-                    await _client.LogoutAsync().ConfigureAwait(false);
-                }
-                catch
-                {
-                    // ignored
-                }
-
-                try
-                {
-                    await _client.StopAsync().ConfigureAwait(false);
-                }
-                catch
-                {
-                    // ignored
-                }
+                await client.StopAsync().ConfigureAwait(false);
+                await client.LogoutAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                HostLogger.Warn("Discord gateway logout failed: " + ex.Message);
             }
             finally
             {
-                _client.Dispose();
-                _client = null;
-                _isConnected = false;
-                _isReady = false;
-                _applicationCommandsRegistered = false;
-                _statusSetOnline = false;
-                _lastPresenceText = null;
+                await client.DisposeAsync().ConfigureAwait(false);
                 await PublishStateAsync().ConfigureAwait(false);
             }
         }
 
-        private bool EnsureReady()
+        private DiscordSocketClient GetConnectedClient()
         {
-            return _isReady && _client != null && _config != null;
+            var client = _client;
+            return client?.ConnectionState == ConnectionState.Connected ? client : null;
         }
 
         private static bool ShouldBackOffChannelRename(Exception ex)
@@ -597,102 +569,61 @@ namespace TorchDiscordSync.DiscordHost.Services
 
         private SocketGuild GetGuild()
         {
-            if (!EnsureReady())
-                return null;
-
-            return _client.GetGuild(_config.GuildId);
+            return GetConnectedClient()?.GetGuild(_config.GuildId);
         }
 
-        private async Task OnBotReady()
+        // Discord.Net raises Connected after both READY and RESUMED.
+        private Task OnBotConnected()
         {
-            _isConnected = true;
-            _isReady = true;
-            await PublishStateAsync().ConfigureAwait(false);
+            return PublishStateAsync();
+        }
+
+        private async Task<bool> OnBotReadyAsync(DiscordSocketClient client, ulong guildId, bool commandsRegistered)
+        {
+            if (!ReferenceEquals(_client, client))
+                return commandsRegistered;
+
+            var guild = client.GetGuild(guildId);
+            if (guild == null)
+            {
+                HostLogger.Warn($"Configured Discord guild {guildId} is unavailable.");
+                return commandsRegistered;
+            }
+
+            if (!commandsRegistered)
+            {
+                try
+                {
+                    await RegisterApplicationCommandsAsync(client, guild).ConfigureAwait(false);
+                    commandsRegistered = true;
+                }
+                catch (Exception ex)
+                {
+                    HostLogger.Warn("Failed to register application commands: " + ex.Message);
+                }
+            }
 
             try
             {
-                await _client.SetStatusAsync(UserStatus.Online).ConfigureAwait(false);
-                _statusSetOnline = true;
-                await _client.SetGameAsync(
-                    "/tds help",
-                    null,
-                    ActivityType.Listening).ConfigureAwait(false);
-                _lastPresenceText = "/tds help";
-            }
-            catch (Exception ex)
-            {
-                HostLogger.Warn("Failed to update Discord presence: " + ex.Message);
-            }
-
-            try
-            {
-                await RegisterApplicationCommandsAsync().ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                HostLogger.Warn("Failed to register application commands: " + ex.Message);
-            }
-
-            try
-            {
-                var guild = _client.GetGuild(_config.GuildId);
-                if (guild != null)
-                    _ = guild.DownloadUsersAsync();
+                if (ReferenceEquals(_client, client) && !guild.HasAllMembers)
+                    await guild.DownloadUsersAsync().WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 HostLogger.Warn("Failed to warm guild user cache: " + ex.Message);
             }
+
+            return commandsRegistered;
         }
 
         private Task OnBotDisconnected(Exception exception)
         {
-            _isConnected = false;
-            _isReady = false;
-            _statusSetOnline = false;
-            _lastPresenceText = null;
-            _ = PublishStateAsync();
+            // The connection manager owns reconnect backoff and session resumption.
+            var detail = exception?.GetBaseException();
+            if (detail != null)
+                HostLogger.Warn($"Discord gateway disconnected ({detail.GetType().Name}): {detail.Message}");
 
-            if (_suppressReconnect)
-                return Task.CompletedTask;
-
-            if (Interlocked.Exchange(ref _isReconnecting, 1) == 1)
-                return Task.CompletedTask;
-
-            _ = Task.Run(async delegate
-            {
-                try
-                {
-                    for (var attempt = 1; attempt <= 5; attempt++)
-                    {
-                        try
-                        {
-                            await Task.Delay(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
-                            if (_client != null && _client.ConnectionState != ConnectionState.Connected)
-                            {
-                                await _client.StartAsync().ConfigureAwait(false);
-                                HostLogger.Info(
-                                    $"Reconnect attempt {attempt}/5 requested.");
-                                return;
-                            }
-                        }
-                        catch (Exception reconnectEx)
-                        {
-                            HostLogger.Warn(
-                                string.Format(
-                                    "Reconnect attempt {0}/5 failed: {1}",
-                                    attempt,
-                                    reconnectEx.Message));
-                        }
-                    }
-                }
-                finally
-                {
-                    Interlocked.Exchange(ref _isReconnecting, 0);
-                }
-            });
-
-            return Task.CompletedTask;
+            return PublishStateAsync();
         }
 
         private async Task OnMessageReceivedAsync(SocketMessage message)
@@ -708,13 +639,18 @@ namespace TorchDiscordSync.DiscordHost.Services
                     return;
                 }
 
+                var content = message.Content;
+                if (string.IsNullOrWhiteSpace(content)
+                    || content.StartsWith(LegacyTextCommandPrefix, StringComparison.Ordinal))
+                    return;
+
                 if (MessageReceived != null)
                 {
                     var incoming = new DiscordIncomingMessage
                     {
                         ChannelId = message.Channel.Id,
                         ChannelName = message.Channel.Name,
-                        Content = message.Content ?? string.Empty,
+                        Content = content,
                         IsDirectMessage = false,
                         AuthorId = message.Author.Id,
                         AuthorUsername = message.Author.Username,
@@ -724,9 +660,6 @@ namespace TorchDiscordSync.DiscordHost.Services
 
                     await MessageReceived.Invoke(incoming).ConfigureAwait(false);
                 }
-
-                if (string.IsNullOrWhiteSpace(message.Content))
-                    return;
             }
             catch (Exception ex)
             {
@@ -765,18 +698,8 @@ namespace TorchDiscordSync.DiscordHost.Services
             await ConnectionStateChanged.Invoke(GetConnectionState()).ConfigureAwait(false);
         }
 
-        private async Task RegisterApplicationCommandsAsync()
+        private static async Task RegisterApplicationCommandsAsync(DiscordSocketClient client, SocketGuild guild)
         {
-            if (_applicationCommandsRegistered || _client == null || _config == null)
-                return;
-
-            var guild = _client.GetGuild(_config.GuildId);
-            if (guild == null)
-            {
-                HostLogger.Warn("Application command registration skipped because the guild is unavailable.");
-                return;
-            }
-
             var guildCommands = new ApplicationCommandProperties[]
             {
                 BuildTdsCommand().Build(),
@@ -784,10 +707,9 @@ namespace TorchDiscordSync.DiscordHost.Services
             await guild.BulkOverwriteApplicationCommandAsync(guildCommands).ConfigureAwait(false);
 
             var globalCommands = Array.Empty<ApplicationCommandProperties>();
-            await ((IDiscordClient)_client).BulkOverwriteGlobalApplicationCommand(globalCommands)
+            await ((IDiscordClient)client).BulkOverwriteGlobalApplicationCommand(globalCommands)
                 .ConfigureAwait(false);
 
-            _applicationCommandsRegistered = true;
             HostLogger.Info("Discord application commands registered.");
         }
 

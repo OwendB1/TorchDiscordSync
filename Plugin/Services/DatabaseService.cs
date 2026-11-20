@@ -339,6 +339,15 @@ namespace TorchDiscordSync.Plugin.Services
             }
         }
 
+        public FactionModel GetFactionByDiscordChannelId(ulong channelId)
+        {
+            if (channelId == 0) return null;
+            lock (_lock)
+            {
+                return _factionData.Factions.FirstOrDefault(f => f.DiscordChannelID == channelId);
+            }
+        }
+
         /// <summary>
         /// Saves or updates a player in XML storage.
         /// </summary>

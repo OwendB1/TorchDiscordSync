@@ -298,6 +298,8 @@ Pull requests are welcome.
 Please maintain compatibility with **C# latest / .NET Framework 4.8**.  
 All code comments must be in **English**.
 
+GitHub Actions builds the Torch plugin and its .NET 8 Discord host on pull requests, pushes to `master`, and manual runs. Download the plugin ZIP from the run's `TorchDiscordSync` artifact. Tags such as `v0.1.4` set the package version and publish the ZIP to GitHub Releases and Torch. Torch publishing uses the repository's `TORCH_API_KEY` Actions secret for OwendB.
+
 ---
 
 ## ☕ Support

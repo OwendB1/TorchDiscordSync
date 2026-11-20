@@ -1,7 +1,6 @@
 // Plugin/index.cs
 
 using System;
-using System.Linq;
 using System.Threading.Tasks;
 using System.Timers;
 using System.Windows.Controls;
@@ -188,21 +187,16 @@ namespace TorchDiscordSync
                         }
 
                         // Faction Discord channel → game faction members (private message)
-                        var factions = _db?.GetAllFactions();
-                        if (factions != null)
+                        var faction = _db?.GetFactionByDiscordChannelId(channelId);
+                        if (faction != null)
                         {
-                            var faction = factions.FirstOrDefault(
-                                f => f.DiscordChannelID == channelId);
-                            if (faction != null)
-                            {
-                                await _chatSync.SendDiscordMessageToFactionInGameAsync(
-                                    faction.FactionID,
-                                    msg.AuthorUsername,
-                                    msg.Content).ConfigureAwait(false);
-                                LoggerUtil.LogDebug(string.Format(
-                                    "[DISCORD>FACTION] {0} from {1}",
-                                    faction.Tag, msg.AuthorUsername));
-                            }
+                            await _chatSync.SendDiscordMessageToFactionInGameAsync(
+                                faction.FactionID,
+                                msg.AuthorUsername,
+                                msg.Content).ConfigureAwait(false);
+                            LoggerUtil.LogDebug(string.Format(
+                                "[DISCORD>FACTION] {0} from {1}",
+                                faction.Tag, msg.AuthorUsername));
                         }
                     };
                 }

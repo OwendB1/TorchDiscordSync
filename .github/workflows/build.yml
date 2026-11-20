@@ -1,0 +1,125 @@
+name: Build and release
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: torch-discord-sync-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Test Torch publishing
+        run: ./Tests/PublishChecks.ps1
+      - name: Dependency cache key
+        id: cache-key
+        shell: pwsh
+        run: |
+          $now = Get-Date
+          "week=$([System.Globalization.ISOWeek]::GetYear($now))-$([System.Globalization.ISOWeek]::GetWeekOfYear($now))" >> $env:GITHUB_OUTPUT
+      - uses: actions/cache@v4
+        id: dependencies
+        with:
+          path: Dependencies
+          key: torch-discord-sync-dependencies-${{ runner.os }}-${{ steps.cache-key.outputs.week }}
+      - name: Download Torch and dedicated server references
+        if: steps.dependencies.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $torchZip = Join-Path $env:RUNNER_TEMP 'torch.zip'
+          $steamZip = Join-Path $env:RUNNER_TEMP 'steamcmd.zip'
+          $steamDir = Join-Path $env:RUNNER_TEMP 'steamcmd'
+          $steam = Join-Path $steamDir 'steamcmd.exe'
+          $game = Join-Path $env:RUNNER_TEMP 'game'
+          Invoke-WebRequest 'https://build.torchapi.com/job/Torch/job/master/lastSuccessfulBuild/artifact/bin/torch-server.zip' -OutFile $torchZip
+          Expand-Archive $torchZip Dependencies -Force
+          Invoke-WebRequest 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip' -OutFile $steamZip
+          Expand-Archive $steamZip $steamDir -Force
+          & $steam +quit
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            & $steam +@sSteamCmdForcePlatformType windows +force_install_dir $game +login anonymous +app_info_update 1 +app_update 298740 validate +quit
+            if ($LASTEXITCODE -eq 0 -and (Test-Path "$game/DedicatedServer64/Sandbox.Game.dll")) { break }
+            if ($attempt -lt 3) { Start-Sleep -Seconds 10 }
+          }
+          if ($attempt -gt 3) { throw 'Steam did not install the dedicated server.' }
+          New-Item -ItemType Directory -Force Dependencies/DedicatedServer64 | Out-Null
+          Copy-Item "$game/DedicatedServer64/*.dll" Dependencies/DedicatedServer64
+          if (!(Test-Path Dependencies/Torch.API.dll)) { throw 'Torch download lacks Torch.API.dll.' }
+      - name: Build and package
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [xml]$manifest = Get-Content manifest.xml
+          $version = $manifest.PluginManifest.Version
+          if ($env:RELEASE_TAG) {
+            if ($env:RELEASE_TAG -notmatch '^v(\d+\.\d+\.\d+)$') { throw 'Release tags must be vMAJOR.MINOR.PATCH.' }
+            $version = $Matches[1]
+            $manifest.PluginManifest.Version = $version
+            $manifest.Save((Join-Path $PWD 'manifest.xml'))
+          }
+          dotnet restore TorchDiscordSync.sln
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency restore failed.' }
+          dotnet build TorchDiscordSync.csproj -c Release --no-restore "-p:Version=$version"
+          if ($LASTEXITCODE -ne 0) { throw 'Plugin build failed.' }
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Copy-Item 'bin/Release/TorchDiscordSync (linux compatible).zip' artifacts/TorchDiscordSync.zip
+          $package = Join-Path $env:RUNNER_TEMP 'torch-discord-sync-package'
+          Expand-Archive artifacts/TorchDiscordSync.zip $package -Force
+          foreach ($file in 'TDS.dll', 'TorchDiscordSync.DiscordHost.exe', 'NLog.dll', 'manifest.xml', 'LICENSE') {
+            if (!(Test-Path (Join-Path $package $file) -PathType Leaf)) { throw "Package is missing $file." }
+          }
+          [xml]$packagedManifest = Get-Content (Join-Path $package 'manifest.xml')
+          if ($packagedManifest.PluginManifest.Version -ne $version) { throw 'Packaged manifest has the wrong version.' }
+          $assemblyVersion = [System.Reflection.AssemblyName]::GetAssemblyName((Join-Path $package 'TDS.dll')).Version
+          if ($assemblyVersion.ToString(3) -ne $version) { throw 'Packaged DLL has the wrong version.' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TorchDiscordSync
+          path: artifacts/*.zip
+          if-no-files-found: error
+          compression-level: 0
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: torchapi-discord-sync-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: TorchDiscordSync
+          path: artifacts
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" artifacts/TorchDiscordSync.zip --clobber
+          else
+            gh release create "$RELEASE_TAG" artifacts/TorchDiscordSync.zip --verify-tag --generate-notes
+          fi
+      - name: Publish to Torch as OwendB
+        env:
+          TORCH_API_KEY: ${{ secrets.TORCH_API_KEY }}
+        shell: pwsh
+        run: |
+          $package = Join-Path $env:RUNNER_TEMP 'torch-discord-sync-package'
+          Expand-Archive artifacts/TorchDiscordSync.zip $package -Force
+          ./ci/Publish-Torch.ps1 -ZipPath artifacts/TorchDiscordSync.zip -ManifestPath (Join-Path $package 'manifest.xml')

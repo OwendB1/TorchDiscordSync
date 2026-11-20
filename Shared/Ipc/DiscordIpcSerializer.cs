@@ -42,13 +42,17 @@ namespace TorchDiscordSync.Shared.Ipc
         {
             using (var buffer = new MemoryStream())
             {
+                buffer.Position = sizeof(int);
                 Serializer.WriteObject(buffer, envelope);
-                var payload = buffer.ToArray();
-                var lengthPrefix = BitConverter.GetBytes(payload.Length);
+                var frame = buffer.GetBuffer();
+                var payloadLength = checked((int)buffer.Length - sizeof(int));
+                // The IPC length prefix is a little-endian Int32.
+                frame[0] = (byte)payloadLength;
+                frame[1] = (byte)(payloadLength >> 8);
+                frame[2] = (byte)(payloadLength >> 16);
+                frame[3] = (byte)(payloadLength >> 24);
 
-                await stream.WriteAsync(lengthPrefix, 0, lengthPrefix.Length, cancellationToken)
-                    .ConfigureAwait(false);
-                await stream.WriteAsync(payload, 0, payload.Length, cancellationToken)
+                await stream.WriteAsync(frame, 0, (int)buffer.Length, cancellationToken)
                     .ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -72,7 +76,8 @@ namespace TorchDiscordSync.Shared.Ipc
             if (lengthRead != lengthPrefix.Length)
                 throw new EndOfStreamException("Pipe closed while reading message length.");
 
-            var payloadLength = BitConverter.ToInt32(lengthPrefix, 0);
+            var payloadLength = lengthPrefix[0] | (lengthPrefix[1] << 8)
+                | (lengthPrefix[2] << 16) | (lengthPrefix[3] << 24);
             if (payloadLength <= 0)
                 throw new InvalidDataException("Pipe message length must be positive.");
 

@@ -13,7 +13,7 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
 
     <!-- ── Assembly metadata (visible in DLL Properties → Details) ── -->
-    <!-- Version is injected by build.py via /p:Version= /p:FileVersion= -->
+    <!-- CI sets Version from the plugin manifest or release tag. -->
     <Product>TorchDiscordSync</Product>
     <AssemblyTitle>TorchDiscordSync</AssemblyTitle>
     <Description>Space Engineers Discord synchronization plugin for Torch server</Description>
@@ -47,6 +47,9 @@
     <EmbeddedResource Remove="DiscordHost\**" />
     <None Update="manifest.xml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="LICENSE">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
   
